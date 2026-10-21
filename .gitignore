@@ -6,6 +6,5 @@ dist/
 !.env.example
 .dev.vars
 wrangler.private.toml
-wrangler.toml
 wrangler.generated.toml
 coverage/

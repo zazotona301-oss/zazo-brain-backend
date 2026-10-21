@@ -1,0 +1,23 @@
+name = "zazo-brain-backend"
+main = "src/index.ts"
+account_id = "f116fb028284f528f1eeb6f487088acf"
+compatibility_date = "2026-10-21"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[triggers]
+crons = ["0 2 * * *"]
+
+[[kv_namespaces]]
+binding = "ACTIVE_CONTEXT"
+id = "3131f2d053e34dc3b81306822592cf32"
+
+[[kv_namespaces]]
+binding = "ARCHIVE_STORE"
+id = "95f488c06b3349d9aa57f3c2ec4ff20a"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "2b7372be6b434607a2d90015620c78d2"

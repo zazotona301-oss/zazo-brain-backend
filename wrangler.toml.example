@@ -1,8 +1,15 @@
-# Example only. Keep placeholders here; never commit resource IDs or secrets.
+# Example only: actual deployment IDs are configured in the repository's wrangler.toml.
+# Do not put database passwords, Access secrets, or API tokens in this file.
 name = "zazo-brain-backend"
 main = "src/index.ts"
 compatibility_date = "2026-10-21"
 compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[triggers]
+crons = ["0 2 * * *"]
 
 [[kv_namespaces]]
 binding = "ACTIVE_CONTEXT"
@@ -15,8 +22,3 @@ id = "<ARCHIVE_STORE_KV_NAMESPACE_ID>"
 [[hyperdrive]]
 binding = "HYPERDRIVE"
 id = "<HYPERDRIVE_CONFIG_ID>"
-
-[vars]
-# Configure these as encrypted Worker secrets, not in this file.
-# CF_ACCESS_TEAM_DOMAIN = "<team>.cloudflareaccess.com"
-# CF_ACCESS_AUD = "<access-application-audience>"
