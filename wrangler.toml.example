@@ -1,0 +1,22 @@
+# Example only. Keep placeholders here; never commit resource IDs or secrets.
+name = "zazo-brain-backend"
+main = "src/index.ts"
+compatibility_date = "2026-10-21"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "ACTIVE_CONTEXT"
+id = "<ACTIVE_CONTEXT_KV_NAMESPACE_ID>"
+
+[[kv_namespaces]]
+binding = "ARCHIVE_STORE"
+id = "<ARCHIVE_STORE_KV_NAMESPACE_ID>"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "<HYPERDRIVE_CONFIG_ID>"
+
+[vars]
+# Configure these as encrypted Worker secrets, not in this file.
+# CF_ACCESS_TEAM_DOMAIN = "<team>.cloudflareaccess.com"
+# CF_ACCESS_AUD = "<access-application-audience>"

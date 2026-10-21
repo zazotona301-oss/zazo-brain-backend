@@ -1,0 +1,84 @@
+name: Deploy Zazo Brain Backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'migrations/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'wrangler.config.ts'
+      - '.github/workflows/deploy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      ACTIVE_CONTEXT_NAMESPACE_ID: ${{ vars.ACTIVE_CONTEXT_NAMESPACE_ID }}
+      ARCHIVE_STORE_NAMESPACE_ID: ${{ vars.ARCHIVE_STORE_NAMESPACE_ID }}
+      HYPERDRIVE_CONFIG_ID: ${{ vars.HYPERDRIVE_CONFIG_ID }}
+      CF_ACCESS_TEAM_DOMAIN: ${{ secrets.CF_ACCESS_TEAM_DOMAIN }}
+      CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Check deployment inputs
+        id: deploy_gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID ACTIVE_CONTEXT_NAMESPACE_ID ARCHIVE_STORE_NAMESPACE_ID HYPERDRIVE_CONFIG_ID CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD; do
+            if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
+          done
+          if ((${#missing[@]} > 0)); then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Worker deployment skipped. Configure GitHub Actions inputs: ${missing[*]}"
+            echo "Checks passed; deployment skipped until these Actions inputs are configured: ${missing[*]}." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Generate private Wrangler config
+        if: steps.deploy_gate.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > wrangler.generated.toml <<TOML
+          name = "zazo-brain-backend"
+          main = "src/index.ts"
+          compatibility_date = "2026-10-21"
+          compatibility_flags = ["nodejs_compat"]
+          account_id = "${CLOUDFLARE_ACCOUNT_ID}"
+          [triggers]
+          crons = ["0 2 * * *"]
+          [[kv_namespaces]]
+          binding = "ACTIVE_CONTEXT"
+          id = "${ACTIVE_CONTEXT_NAMESPACE_ID}"
+          [[kv_namespaces]]
+          binding = "ARCHIVE_STORE"
+          id = "${ARCHIVE_STORE_NAMESPACE_ID}"
+          [[hyperdrive]]
+          binding = "HYPERDRIVE"
+          id = "${HYPERDRIVE_CONFIG_ID}"
+          TOML
+      - name: Upload encrypted Worker secrets
+        if: steps.deploy_gate.outputs.ready == 'true'
+        shell: bash
+        run: |
+          printf '%s' "$CF_ACCESS_TEAM_DOMAIN" | npx wrangler secret put CF_ACCESS_TEAM_DOMAIN --config wrangler.generated.toml
+          printf '%s' "$CF_ACCESS_AUD" | npx wrangler secret put CF_ACCESS_AUD --config wrangler.generated.toml
+      - name: Deploy Worker
+        if: steps.deploy_gate.outputs.ready == 'true'
+        run: npx wrangler deploy --config wrangler.generated.toml
