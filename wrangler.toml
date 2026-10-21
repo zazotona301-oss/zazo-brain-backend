@@ -3,6 +3,8 @@ main = "src/index.ts"
 account_id = "f116fb028284f528f1eeb6f487088acf"
 compatibility_date = "2026-10-21"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
 
 [observability]
 enabled = true

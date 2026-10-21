@@ -4,6 +4,8 @@ name = "zazo-brain-backend"
 main = "src/index.ts"
 compatibility_date = "2026-10-21"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
 
 [observability]
 enabled = true

@@ -2,21 +2,33 @@
 
 باك إند مستقل عن React في مستودع منفصل، مبني بـ **TypeScript + Hono + Cloudflare Workers**. يخزن البيانات التشغيلية في Neon PostgreSQL عبر **Cloudflare Hyperdrive**، والسياق النشط وأرشيفات JSONL الصغيرة في Cloudflare KV فقط؛ لا يستخدم R2.
 
-## الحالة والبنية
+## الحالة الحالية
 
 - مستودع الباك إند: `zazotona301-oss/zazo-brain-backend`، فرع `main`.
+- رابط Worker: <https://zazo-brain-backend.zazotona301.workers.dev>.
+- أول بناء Cloudflare Workers Builds اكتمل بنجاح، و`GET /health` يعيد HTTP 200.
+- النشر التلقائي مرتبط بـGitHub؛ كل push إلى `main` يشغّل الفحوص ثم ينشر إلى Cloudflare.
+- مسارات `/api/*` ترفض الطلب حالياً بـ`503 service_not_configured` لأن Cloudflare Access غير مفعّل في الحساب بعد. هذا سلوك fail-closed مقصود؛ بيانات الذاكرة ليست مكشوفة للعامة.
 - مخطط Neon نُشر على فرع `production` في قاعدة `neondb`، واختُبر قبل تطبيقه على الإنتاج.
-- جداول PostgreSQL: `worlds`, `rooms`, `memories`, `conversations`, `messages`.
+
+## البنية وقاعدة البيانات
+
+- الجداول: `worlds`, `rooms`, `memories`, `conversations`, `messages`.
 - `memories` تخزن `instruction`, `context`, `response` و`embedding vector(1536)` اختيارياً.
-- تم تجهيز دور قاعدة محدود للـ Worker، ويصل إلى PostgreSQL عبر Hyperdrive؛ كلمة مرور قاعدة البيانات مخزنة داخل Hyperdrive وليست في Git.
-- `wrangler.toml` يضم معرفات موارد Cloudflare غير السرية (حساب، KV، Hyperdrive) لتكون إعادة النشر قابلة للتكرار. لا تضع كلمات مرور أو API tokens أو `.dev.vars` في Git.
+- توجد العوالم السبعة المطلوبة، ولكل عالم غرفة `general`.
+- تم تجهيز دور قاعدة محدود للـWorker؛ كلمة مرور PostgreSQL محفوظة داخل Hyperdrive وليست في Git.
+- `wrangler.toml` يحتوي معرّفات موارد Cloudflare غير السرية ليكون النشر قابلاً للتكرار. لا تضع كلمات مرور أو API tokens أو `.dev.vars` في Git.
 
-## الأمان
+## الأمان وإكمال Cloudflare Access
 
-- `GET /health` عام.
-- كل مسارات `/api/*` محمية بتحقق Cloudflare Access JWT، ويُتحقق من issuer وaudience والتوقيع عبر JWKS.
-- يجب ضبط `CF_ACCESS_TEAM_DOMAIN` و`CF_ACCESS_AUD` كـ Worker Secrets بعد إنشاء تطبيق Access. إذا لم تضبطهما الخدمة ترفض طلبات API بـ `503 service_not_configured` (fail-closed).
-- الترويسة المطلوبة بعد إتمام Access هي `Authorization: Bearer <Cloudflare Access JWT>`.
+`GET /health` عام. جميع مسارات `/api/*` تتطلب Cloudflare Access JWT؛ يتحقق الباك إند من issuer وaudience والتوقيع عبر JWKS. لكي تصبح API متاحة لمستخدم مخوّل:
+
+1. في Cloudflare Dashboard، فعّل Zero Trust / Access للحساب إذا لم يكن مفعّلاً بعد.
+2. من **Workers & Pages → zazo-brain-backend → Settings → Domains & Routes** فعّل Cloudflare Access على Worker الإنتاجي، واختر سياسة سماح مقيّدة بهويتك فقط؛ لا تستخدم allow-all.
+3. خذ Team domain وAudience من إعداد Access، ثم اضبطهما كـWorker Secrets باسم `CF_ACCESS_TEAM_DOMAIN` و`CF_ACCESS_AUD` (من لوحة Worker أو عبر `npx wrangler secret put`).
+4. بعد الإعداد اختبر طلباً مصادقاً إلى `/api/worlds`. لا تضع JWT أو بيانات سرية في الواجهة أو المستودع.
+
+توثيق Cloudflare: [Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) و[Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/).
 
 ## API
 
@@ -33,8 +45,6 @@
 | `POST /api/dataset/export` | تصدير الذاكرات إلى JSONL في KV |
 
 ## العوالم والغرف
-
-تحتوي قاعدة البيانات على العوالم السبعة التي طلبتها، ولكل عالم غرفة `general`:
 
 | slug | الاسم |
 | --- | --- |
@@ -58,39 +68,25 @@
 
 ## النشر التلقائي على Cloudflare
 
-النشر مطلوب عبر **Cloudflare Workers Builds** المرتبط بمستودع GitHub، وليس عبر منصة نشر خارجية:
+تم ربط Cloudflare Workers Builds بمستودع GitHub على الفرع `main`، ونجح أول build/deploy. إعدادات trigger:
 
-- المستودع: `zazotona301-oss/zazo-brain-backend`، الفرع الإنتاجي `main`.
-- Build command: `npm run check`.
+- Build command: `npm ci && npm run check`.
 - Deploy command: `npm run deploy` (`wrangler deploy`).
-- عند دفع commit إلى `main` يشغل Cloudflare الفحوص ثم ينشر Worker من `wrangler.toml`.
-- GitHub Actions في هذا المستودع يشغّل الفحوص والتحقق من bundle فقط؛ Cloudflare Workers Builds يتولى النشر المباشر من GitHub.
-- ملفات إعداد النشر لا تحتاج أسرار GitHub؛ مفاتيح التشغيل تبقى في Cloudflare، أما كلمة مرور PostgreSQL فتبقى داخل Hyperdrive.
+- Root directory: `/`.
+- Preview URLs معطّلة في Wrangler؛ رابط Worker الإنتاجي هو الرابط أعلاه.
 
-## إعداد Access وبيئة التطوير
+GitHub Actions يشغّل الفحوص والتحقق من bundle فقط؛ Cloudflare Workers Builds يتولى النشر المباشر من GitHub. لا يحتاج النشر إلى أسرار GitHub، وتبقى بيانات قاعدة البيانات داخل Hyperdrive.
 
-بعد إنشاء تطبيق Cloudflare Access يحمي نطاق Worker، اضبط الأسرار داخل إعدادات Worker:
-
-```bash
-npx wrangler secret put CF_ACCESS_TEAM_DOMAIN
-npx wrangler secret put CF_ACCESS_AUD
-```
-
-للتطوير المحلي:
+## التطوير وفحوص الجودة
 
 ```bash
 npm ci
-cp .dev.vars.example .dev.vars
-npm run dev
-```
-
-املأ `.dev.vars` بقيم Access الخاصة بك عند توفرها. يبقى الملف مستبعداً من Git. لفحص المشروع شغّل:
-
-```bash
 npm run check
 npx wrangler deploy --dry-run
 ```
 
+للتطوير المحلي، انسخ `.dev.vars.example` إلى `.dev.vars` وأدخل قيم Access الخاصة بك عند توفرها، ثم شغّل `npm run dev`. يبقى `.dev.vars` مستبعداً من Git.
+
 ## تغييرات قاعدة البيانات مستقبلاً
 
-المخطط الموجود في `migrations/0001_init.sql` أُطبق بالفعل على قاعدة الإنتاج. أي migration جديدة يجب مراجعتها واختبارها على فرع مؤقت أولاً، ولا يشغّل Worker أو GitHub Actions SQL تلقائياً.
+المخطط الموجود في `migrations/0001_init.sql` أُطبق بالفعل على قاعدة الإنتاج. أي migration جديدة يجب مراجعتها واختبارها على فرع مؤقت أولاً؛ لا يشغّل Worker أو GitHub Actions SQL تلقائياً.
