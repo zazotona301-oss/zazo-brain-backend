@@ -4,6 +4,7 @@ export interface Env {
   HYPERDRIVE?: HyperdriveBinding;
   ACTIVE_CONTEXT?: KVNamespace;
   ARCHIVE_STORE?: KVNamespace;
+  OPENAI_API_KEY?: string;
   CF_ACCESS_TEAM_DOMAIN?: string;
   CF_ACCESS_AUD?: string;
 }

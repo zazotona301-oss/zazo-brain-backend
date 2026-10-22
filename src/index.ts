@@ -10,12 +10,34 @@ type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
 app.use('*', cors({ origin: '*', allowHeaders: ['Content-Type'], allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }));
 const jsonObject = (value: Record<string, unknown> | undefined): string => JSON.stringify(value ?? {});
-const limitFrom = (c: Context<AppEnv>): number => Math.min(Math.max(Number(c.req.query('limit') ?? '50') || 50, 1), 100);
+const limitFrom = (c: Context<AppEnv>): number => Math.min(Math.max(Number(c.req.query('limit') ?? '50') || 50, 1), 10_000);
 const parseId = (value: string): string => idSchema.parse(value);
 
 app.get('/', (c) => c.json({ service: 'zazo-brain-backend', status: 'ok', storage: { neon: Boolean(c.env.HYPERDRIVE), kv: Boolean(c.env.ACTIVE_CONTEXT && c.env.ARCHIVE_STORE) } }));
 app.get('/health', (c) => c.json({ status: 'ok', service: 'zazo-brain-backend', time: new Date().toISOString() }));
 app.get('/api/health', (c) => c.json({ status: 'ok', storage: { neon: Boolean(c.env.HYPERDRIVE), kv: Boolean(c.env.ACTIVE_CONTEXT && c.env.ARCHIVE_STORE) } }));
+
+app.post('/api/transcribe', async (c) => {
+  if (!c.env.OPENAI_API_KEY) return c.json({ error: 'service_not_configured', message: 'Audio transcription is not configured on this Worker' }, 503);
+  const form = await c.req.raw.formData();
+  const incoming = form.get('file');
+  if (!incoming || typeof incoming !== 'object' || !('arrayBuffer' in incoming)) return c.json({ error: 'validation_error', message: 'file is required' }, 400);
+  const file = incoming as File;
+  if (file.size > 25 * 1024 * 1024) return c.json({ error: 'file_too_large', message: 'Audio files must be smaller than 25 MB' }, 413);
+  const requestForm = new FormData();
+  requestForm.append('file', file, file.name || 'audio.webm');
+  requestForm.append('model', 'whisper-1');
+  const language = form.get('language');
+  if (typeof language === 'string' && language) requestForm.append('language', language.slice(0, 10));
+  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${c.env.OPENAI_API_KEY}` },
+    body: requestForm
+  });
+  const payload = await response.json().catch(() => ({})) as { text?: unknown };
+  if (!response.ok) return c.json({ error: 'transcription_failed', message: 'The transcription provider rejected the file' }, 502);
+  return c.json({ text: typeof payload.text === 'string' ? payload.text : '', provider: 'openai-whisper' });
+});
 
 app.get('/api/worlds', async (c) => c.json(await query(c.env, 'SELECT * FROM worlds ORDER BY created_at DESC LIMIT $1', [limitFrom(c)])));
 app.post('/api/worlds', async (c) => {
