@@ -1,7 +1,5 @@
-import { Pool, type QueryResultRow } from 'pg';
+import { Client, type QueryResultRow } from 'pg';
 import type { Env } from './env';
-
-const pools = new WeakMap<object, Pool>();
 
 export class ConfigurationError extends Error {
   constructor(message: string) {
@@ -10,21 +8,21 @@ export class ConfigurationError extends Error {
   }
 }
 
-export function getPool(env: Env): Pool {
+export async function query<T extends QueryResultRow = QueryResultRow>(env: Env, text: string, values: unknown[] = []): Promise<T[]> {
   if (!env.HYPERDRIVE?.connectionString) {
     throw new ConfigurationError('HYPERDRIVE binding is not configured');
   }
-  const key = env as object;
-  const existing = pools.get(key);
-  if (existing) return existing;
-  const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 4, idleTimeoutMillis: 10_000 });
-  pools.set(key, pool);
-  return pool;
-}
 
-export async function query<T extends QueryResultRow = QueryResultRow>(env: Env, text: string, values: unknown[] = []): Promise<T[]> {
-  const result = await getPool(env).query<T>(text, values);
-  return result.rows;
+  // Hyperdrive maintains the underlying pool. A Client must be created per
+  // Worker request instead of keeping a global pg Pool across invocations.
+  const client = new Client({ connectionString: env.HYPERDRIVE.connectionString });
+  await client.connect();
+  try {
+    const result = await client.query<T>(text, values);
+    return result.rows;
+  } finally {
+    await client.end();
+  }
 }
 
 export function jsonSafe(value: unknown): unknown {
