@@ -36,7 +36,26 @@ app.post('/api/transcribe', async (c) => {
   });
   const payload = await response.json().catch(() => ({})) as { text?: unknown };
   if (!response.ok) return c.json({ error: 'transcription_failed', message: 'The transcription provider rejected the file' }, 502);
-  return c.json({ text: typeof payload.text === 'string' ? payload.text : '', provider: 'openai-whisper' });
+  const rawText = typeof payload.text === 'string' ? payload.text.trim() : '';
+  let filteredText = rawText;
+  let filterApplied = false;
+  if (rawText) {
+    const raqaEndpoint = c.env.RAQA_API_URL || 'https://raqa-1zhm.vercel.app/api/chatController';
+    const raqaHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (c.env.RAQA_API_KEY) raqaHeaders.Authorization = `Bearer ${c.env.RAQA_API_KEY}`;
+    const filterResponse = await fetch(raqaEndpoint, {
+      method: 'POST',
+      headers: raqaHeaders,
+      body: JSON.stringify({ message: `نظّف النص الصوتي التالي دون اختراع معلومات: احذف الترددات والحشو والتكرار وأخطاء التفريغ الواضحة، وحافظ على المعنى والمصطلحات والأسماء. أعد النص المنقح فقط بلا مقدمة أو شرح.\n\nالنص:\n${rawText}` })
+    });
+    const filterPayload = await filterResponse.json().catch(() => ({})) as { reply?: unknown; message?: unknown };
+    const candidate = typeof filterPayload.reply === 'string' ? filterPayload.reply : typeof filterPayload.message === 'string' ? filterPayload.message : '';
+    if (filterResponse.ok && candidate.trim()) {
+      filteredText = candidate.trim();
+      filterApplied = true;
+    }
+  }
+  return c.json({ text: filteredText, rawText, filterApplied, transcriptionProvider: 'openai-whisper', filterProvider: 'raqa' });
 });
 
 const intellectualSystemPrompt = `You are an expert Intellectual Data Extraction & Analysis Agent. Analyze the supplied book, lecture transcript, article, or raw text. Filter out fluff, introductions, repetitive examples, and filler. Extract only foundational intellectual concepts, philosophical arguments, cognitive models, and actionable insights aligned with awareness, leadership, philosophy, human decision-making, and structured knowledge architecture. For every node evaluate depth, cognitive value, and relevance. Return ONLY valid JSON, with no Markdown fences or commentary, using exactly this shape: {"source_metadata":{"title":"","author_or_speaker":"","category":""},"extracted_nodes":[{"node_id":"concept_001","concept_title":"","core_summary":"Arabic, 2-4 precise dense sentences","original_quote":"Direct quote in the source language","tags":[""],"cognitive_relevance_score":0.95,"key_takeaway":"Arabic connection to awareness, decision-making, or thinking models"}]}. Preserve the source language for original_quote, but write core_summary and key_takeaway in Arabic. Keep only substantive ideas and use scores from 0 to 1.`;
