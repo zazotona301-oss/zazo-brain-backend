@@ -55,3 +55,42 @@ jobs:
             exit 1
           fi
           printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --name zazo-brain-backend
+
+  audio-smoke-test:
+    name: Audio transcription smoke test
+    if: github.event_name == 'workflow_dispatch'
+    needs: sync-worker-secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public speech sample
+        run: curl -L --fail --silent --show-error --max-time 60 https://raw.githubusercontent.com/openai/whisper/main/tests/jfk.flac -o sample.flac
+      - name: Verify OpenAI transcription with the configured secret
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 120 \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -F file=@sample.flac \
+            -F model=whisper-1 \
+            -F language=en \
+            https://api.openai.com/v1/audio/transcriptions > openai-result.json
+          python3 - <<'PY'
+          import json
+          result = json.load(open('openai-result.json'))
+          assert result.get('text', '').strip(), 'OpenAI returned no transcript'
+          print('OpenAI transcription returned text successfully')
+          PY
+      - name: Verify Worker transcription and Raqa filtering
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 180 \
+            -F file=@sample.flac \
+            -F language=en \
+            https://zazo-brain-backend.zazotona301.workers.dev/api/transcribe > worker-result.json
+          python3 - <<'PY'
+          import json
+          result = json.load(open('worker-result.json'))
+          assert result.get('transcriptionProvider') == 'openai-whisper'
+          assert result.get('rawText', '').strip(), 'Worker returned no raw transcript'
+          assert result.get('text', '').strip(), 'Worker returned no cleaned transcript'
+          print({'filterProvider': result.get('filterProvider'), 'filterApplied': result.get('filterApplied')})
+          PY
