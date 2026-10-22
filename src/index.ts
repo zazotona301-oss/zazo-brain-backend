@@ -50,7 +50,7 @@ app.post('/api/intellectual-extract', async (c) => {
   const userPayload = JSON.stringify({ title: body.title || '', author_or_speaker: body.authorOrSpeaker || '', category: body.category || '', source_text: text });
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (c.env.RAQA_API_KEY) headers.Authorization = `Bearer ${c.env.RAQA_API_KEY}`;
-  const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ messages: [{ role: 'system', content: intellectualSystemPrompt }, { role: 'user', content: userPayload }] }) });
+  const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ message: `${intellectualSystemPrompt}\n\nSOURCE METADATA AND TEXT:\n${userPayload}` }) });
   const payload = await response.json().catch(() => ({})) as { reply?: unknown; message?: unknown };
   if (!response.ok) return c.json({ error: 'assistant_failed', message: 'The intellectual analysis provider failed' }, 502);
   const raw = typeof payload.reply === 'string' ? payload.reply : typeof payload.message === 'string' ? payload.message : '';
