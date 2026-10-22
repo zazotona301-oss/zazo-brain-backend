@@ -21,7 +21,9 @@
 
 ## الوصول العام والتخزين
 
-`GET /health` و`GET /api/health` عامان. جميع مسارات `/api/*` عامة مع CORS لأن الواجهة المنشورة لا تحمل جلسة Cloudflare Access. Neon عبر `HYPERDRIVE` هو مصدر البيانات الدائم، وKV عبر `ACTIVE_CONTEXT` و`ARCHIVE_STORE` مخصص للسياق النشط وأرشيفات JSONL. لا تضع أسرار Neon أو Cloudflare في الواجهة؛ حماية الإنتاج يجب أن تعتمد لاحقاً على rate limiting أو مفتاح تطبيق أو مصادقة مستخدم إذا أصبحت البيانات غير عامة.
+`GET /health` و`GET /api/health` عامان. جميع مسارات `/api/*` عامة مع CORS لأن الواجهة المنشورة لا تحمل جلسة Cloudflare Access. Neon عبر `HYPERDRIVE` هو مصدر البيانات الدائم، وKV عبر `ACTIVE_CONTEXT` و`ARCHIVE_STORE` مخصص للسياق النشط وأرشيفات JSONL. لا تضع أسرار Neon أو Cloudflare في الواجهة؛ حماية الإنتاج يجب أن تعتمد لاحقاً على rate limiting أو مفتاح تطبيق أو مصادقة مستخدم إذا أصبحت البيانات غير عامة. حد القائمة يصل إلى 10,000 سجل لدعم مستودع النسخ الاحتياطي.
+
+مسار `POST /api/transcribe` اختياري ويحوّل ملفاً صوتياً حتى 25MB إلى نص عبر OpenAI Whisper عند ضبط secret باسم `OPENAI_API_KEY` في Worker. بدون هذا secret يعيد المسار `503` ولا يتم رفع الصوت.
 
 ## API
 
