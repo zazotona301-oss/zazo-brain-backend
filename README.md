@@ -8,7 +8,7 @@
 - رابط Worker: <https://zazo-brain-backend.zazotona301.workers.dev>.
 - أول بناء Cloudflare Workers Builds اكتمل بنجاح، و`GET /health` يعيد HTTP 200.
 - النشر التلقائي مرتبط بـGitHub؛ كل push إلى `main` يشغّل الفحوص ثم ينشر إلى Cloudflare.
-- مسارات `/api/*` ترفض الطلب حالياً بـ`503 service_not_configured` لأن Cloudflare Access غير مفعّل في الحساب بعد. هذا سلوك fail-closed مقصود؛ بيانات الذاكرة ليست مكشوفة للعامة.
+- مسارات `/api/*` عامة ومهيأة لـ CORS كي تتصل بها واجهة React مباشرة؛ لا تستخدم Supabase ولا Cloudflare Access.
 - مخطط Neon نُشر على فرع `production` في قاعدة `neondb`، واختُبر قبل تطبيقه على الإنتاج.
 
 ## البنية وقاعدة البيانات
@@ -19,22 +19,16 @@
 - تم تجهيز دور قاعدة محدود للـWorker؛ كلمة مرور PostgreSQL محفوظة داخل Hyperdrive وليست في Git.
 - `wrangler.toml` يحتوي معرّفات موارد Cloudflare غير السرية ليكون النشر قابلاً للتكرار. لا تضع كلمات مرور أو API tokens أو `.dev.vars` في Git.
 
-## الأمان وإكمال Cloudflare Access
+## الوصول العام والتخزين
 
-`GET /health` عام. جميع مسارات `/api/*` تتطلب Cloudflare Access JWT؛ يتحقق الباك إند من issuer وaudience والتوقيع عبر JWKS. لكي تصبح API متاحة لمستخدم مخوّل:
-
-1. في Cloudflare Dashboard، فعّل Zero Trust / Access للحساب إذا لم يكن مفعّلاً بعد.
-2. من **Workers & Pages → zazo-brain-backend → Settings → Domains & Routes** فعّل Cloudflare Access على Worker الإنتاجي، واختر سياسة سماح مقيّدة بهويتك فقط؛ لا تستخدم allow-all.
-3. خذ Team domain وAudience من إعداد Access، ثم اضبطهما كـWorker Secrets باسم `CF_ACCESS_TEAM_DOMAIN` و`CF_ACCESS_AUD` (من لوحة Worker أو عبر `npx wrangler secret put`).
-4. بعد الإعداد اختبر طلباً مصادقاً إلى `/api/worlds`. لا تضع JWT أو بيانات سرية في الواجهة أو المستودع.
-
-توثيق Cloudflare: [Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) و[Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/).
+`GET /health` و`GET /api/health` عامان. جميع مسارات `/api/*` عامة مع CORS لأن الواجهة المنشورة لا تحمل جلسة Cloudflare Access. Neon عبر `HYPERDRIVE` هو مصدر البيانات الدائم، وKV عبر `ACTIVE_CONTEXT` و`ARCHIVE_STORE` مخصص للسياق النشط وأرشيفات JSONL. لا تضع أسرار Neon أو Cloudflare في الواجهة؛ حماية الإنتاج يجب أن تعتمد لاحقاً على rate limiting أو مفتاح تطبيق أو مصادقة مستخدم إذا أصبحت البيانات غير عامة.
 
 ## API
 
 | المسار | الوظيفة |
 | --- | --- |
 | `GET /health` | فحص الخدمة |
+| `GET /api/health` | فحص توفر Neon وKV |
 | `/api/worlds` | قائمة/إنشاء/قراءة/حذف العوالم |
 | `/api/rooms` و`/api/worlds/:worldId/rooms` | قائمة/إنشاء/قراءة/حذف الغرف |
 | `/api/memories` | CRUD للذاكرات بصيغة Instruction/Context/Response مع embedding اختياري |
@@ -43,6 +37,7 @@
 | `GET /api/search?q=...` | بحث full-text في الذاكرات والرسائل |
 | `GET/PUT /api/context/active` | قراءة/حفظ السياق النشط في KV |
 | `POST /api/dataset/export` | تصدير الذاكرات إلى JSONL في KV |
+| `PUT /api/conversations/:id` | تحديث عنوان المحادثة |
 
 ## العوالم والغرف
 

@@ -1,20 +1,21 @@
 import { Hono, type Context } from 'hono';
+import { cors } from 'hono/cors';
 import { z } from 'zod';
-import type { JWTPayload } from 'jose';
 import type { Env } from './env';
-import { accessJwt } from './auth';
 import { ConfigurationError, query } from './db';
 import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
 import { activeContextSchema, conversationSchema, idSchema, jsonBody, memorySchema, messageSchema, roomSchema, worldSchema } from './validation';
 
-type AppEnv = { Bindings: Env; Variables: { accessClaims: JWTPayload } };
+type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
+app.use('*', cors({ origin: '*', allowHeaders: ['Content-Type'], allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }));
 const jsonObject = (value: Record<string, unknown> | undefined): string => JSON.stringify(value ?? {});
 const limitFrom = (c: Context<AppEnv>): number => Math.min(Math.max(Number(c.req.query('limit') ?? '50') || 50, 1), 100);
 const parseId = (value: string): string => idSchema.parse(value);
 
+app.get('/', (c) => c.json({ service: 'zazo-brain-backend', status: 'ok', storage: { neon: Boolean(c.env.HYPERDRIVE), kv: Boolean(c.env.ACTIVE_CONTEXT && c.env.ARCHIVE_STORE) } }));
 app.get('/health', (c) => c.json({ status: 'ok', service: 'zazo-brain-backend', time: new Date().toISOString() }));
-app.use('/api/*', accessJwt);
+app.get('/api/health', (c) => c.json({ status: 'ok', storage: { neon: Boolean(c.env.HYPERDRIVE), kv: Boolean(c.env.ACTIVE_CONTEXT && c.env.ARCHIVE_STORE) } }));
 
 app.get('/api/worlds', async (c) => c.json(await query(c.env, 'SELECT * FROM worlds ORDER BY created_at DESC LIMIT $1', [limitFrom(c)])));
 app.post('/api/worlds', async (c) => {
@@ -50,8 +51,15 @@ app.delete('/api/rooms/:id', async (c) => {
 app.get('/api/memories', async (c) => c.json(await query(c.env, 'SELECT * FROM memories ORDER BY created_at DESC LIMIT $1', [limitFrom(c)])));
 app.post('/api/memories', async (c) => {
   const data = await jsonBody(c.req.raw, memorySchema);
+  const worldId = data.worldId ?? null;
+  let roomId = data.roomId ?? null;
+  if (!worldId && !roomId) {
+    const defaults = await query<{ id: string }>(c.env, "SELECT id FROM rooms WHERE slug = 'general' ORDER BY created_at ASC LIMIT 1");
+    roomId = defaults[0]?.id ?? null;
+    if (!roomId) return c.json({ error: 'configuration_error', message: 'No default room is configured' }, 503);
+  }
   const vector = data.embedding ? `[${data.embedding.join(',')}]` : null;
-  const rows = await query(c.env, 'INSERT INTO memories (world_id, room_id, instruction, context, response, metadata, embedding) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::vector) RETURNING *', [data.worldId ?? null, data.roomId ?? null, data.instruction, data.context, data.response, jsonObject(data.metadata), vector]);
+  const rows = await query(c.env, 'INSERT INTO memories (world_id, room_id, instruction, context, response, metadata, embedding) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::vector) RETURNING *', [worldId, roomId, data.instruction, data.context, data.response, jsonObject(data.metadata), vector]);
   return c.json(rows[0], 201);
 });
 app.get('/api/memories/:id', async (c) => {
@@ -69,6 +77,11 @@ app.post('/api/conversations', async (c) => {
   const rows = await query(c.env, 'INSERT INTO conversations (world_id, room_id, title, metadata) VALUES ($1,$2,$3,$4::jsonb) RETURNING *', [data.worldId ?? null, data.roomId ?? null, data.title ?? null, jsonObject(data.metadata)]);
   return c.json(rows[0], 201);
 });
+app.put('/api/conversations/:id', async (c) => {
+  const data = await jsonBody(c.req.raw, conversationSchema);
+  const rows = await query(c.env, 'UPDATE conversations SET title = COALESCE($2, title), metadata = COALESCE($3::jsonb, metadata), updated_at = now() WHERE id = $1 RETURNING *', [parseId(c.req.param('id')), data.title ?? null, data.metadata ? jsonObject(data.metadata) : null]);
+  return rows[0] ? c.json(rows[0]) : c.json({ error: 'not_found' }, 404);
+});
 app.get('/api/conversations/:id', async (c) => {
   const rows = await query(c.env, 'SELECT * FROM conversations WHERE id = $1', [parseId(c.req.param('id'))]);
   return rows[0] ? c.json(rows[0]) : c.json({ error: 'not_found' }, 404);
@@ -83,6 +96,7 @@ app.get('/api/conversations/:conversationId/messages', async (c) => c.json(await
 app.post('/api/messages', async (c) => {
   const data = await jsonBody(c.req.raw, messageSchema);
   const rows = await query(c.env, 'INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1,$2,$3,$4::jsonb) RETURNING *', [data.conversationId, data.role, data.content, jsonObject(data.metadata)]);
+  await query(c.env, 'UPDATE conversations SET updated_at = now() WHERE id = $1', [data.conversationId]);
   return c.json(rows[0], 201);
 });
 app.get('/api/messages/:id', async (c) => {

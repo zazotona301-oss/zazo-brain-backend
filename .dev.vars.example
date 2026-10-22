@@ -1,3 +1,1 @@
-# Local dev secrets. Copy to .dev.vars (ignored) and replace placeholders.
-CF_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
-CF_ACCESS_AUD=<cloudflare-access-application-audience>
+# No local secrets are required for the public Worker routes.
