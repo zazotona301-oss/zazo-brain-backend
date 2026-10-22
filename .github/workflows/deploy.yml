@@ -29,3 +29,29 @@ jobs:
       - run: npm run check
       - name: Validate Wrangler bundle without deploying
         run: npx wrangler deploy --dry-run
+
+  sync-worker-secrets:
+    name: Sync Worker secrets
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Update OPENAI_API_KEY in Cloudflare Worker
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY is not configured in GitHub Secrets; skipping Worker secret sync."
+            exit 0
+          fi
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "CLOUDFLARE_API_TOKEN is required to sync GitHub Secrets into the Worker." >&2
+            exit 1
+          fi
+          printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --name zazo-brain-backend
