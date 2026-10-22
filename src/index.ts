@@ -39,6 +39,34 @@ app.post('/api/transcribe', async (c) => {
   return c.json({ text: typeof payload.text === 'string' ? payload.text : '', provider: 'openai-whisper' });
 });
 
+const intellectualSystemPrompt = `You are an expert Intellectual Data Extraction & Analysis Agent. Analyze the supplied book, lecture transcript, article, or raw text. Filter out fluff, introductions, repetitive examples, and filler. Extract only foundational intellectual concepts, philosophical arguments, cognitive models, and actionable insights aligned with awareness, leadership, philosophy, human decision-making, and structured knowledge architecture. For every node evaluate depth, cognitive value, and relevance. Return ONLY valid JSON, with no Markdown fences or commentary, using exactly this shape: {"source_metadata":{"title":"","author_or_speaker":"","category":""},"extracted_nodes":[{"node_id":"concept_001","concept_title":"","core_summary":"Arabic, 2-4 precise dense sentences","original_quote":"Direct quote in the source language","tags":[""],"cognitive_relevance_score":0.95,"key_takeaway":"Arabic connection to awareness, decision-making, or thinking models"}]}. Preserve the source language for original_quote, but write core_summary and key_takeaway in Arabic. Keep only substantive ideas and use scores from 0 to 1.`;
+
+app.post('/api/intellectual-extract', async (c) => {
+  const body = await c.req.json().catch(() => ({})) as { text?: unknown; title?: unknown; authorOrSpeaker?: unknown; category?: unknown };
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  if (!text) return c.json({ error: 'validation_error', message: 'text is required' }, 400);
+  if (text.length > 120_000) return c.json({ error: 'text_too_large', message: 'Analyze up to 120,000 characters at a time' }, 413);
+  const endpoint = c.env.RAQA_API_URL || 'https://raqa-1zhm.vercel.app/api/chatController';
+  const userPayload = JSON.stringify({ title: body.title || '', author_or_speaker: body.authorOrSpeaker || '', category: body.category || '', source_text: text });
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (c.env.RAQA_API_KEY) headers.Authorization = `Bearer ${c.env.RAQA_API_KEY}`;
+  const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ messages: [{ role: 'system', content: intellectualSystemPrompt }, { role: 'user', content: userPayload }] }) });
+  const payload = await response.json().catch(() => ({})) as { reply?: unknown; message?: unknown };
+  if (!response.ok) return c.json({ error: 'assistant_failed', message: 'The intellectual analysis provider failed' }, 502);
+  const raw = typeof payload.reply === 'string' ? payload.reply : typeof payload.message === 'string' ? payload.message : '';
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) return c.json({ error: 'invalid_assistant_json', message: 'The assistant did not return strict JSON', raw }, 502);
+  try {
+    const result = JSON.parse(cleaned.slice(start, end + 1)) as { source_metadata?: unknown; extracted_nodes?: unknown };
+    if (!Array.isArray(result.extracted_nodes)) throw new Error('extracted_nodes must be an array');
+    return c.json({ ...result, provider: endpoint });
+  } catch {
+    return c.json({ error: 'invalid_assistant_json', message: 'The assistant returned malformed JSON', raw }, 502);
+  }
+});
+
 app.get('/api/worlds', async (c) => c.json(await query(c.env, 'SELECT * FROM worlds ORDER BY created_at DESC LIMIT $1', [limitFrom(c)])));
 app.post('/api/worlds', async (c) => {
   const data = await jsonBody(c.req.raw, worldSchema);

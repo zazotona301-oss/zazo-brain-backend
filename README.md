@@ -25,6 +25,8 @@
 
 مسار `POST /api/transcribe` اختياري ويحوّل ملفاً صوتياً حتى 25MB إلى نص عبر OpenAI Whisper عند ضبط secret باسم `OPENAI_API_KEY` في Worker. بدون هذا secret يعيد المسار `503` ولا يتم رفع الصوت.
 
+مسار `POST /api/intellectual-extract` يرسل النص إلى مساعد Raqa (`https://raqa-1zhm.vercel.app/api/chatController`) مع برمبت استخراج الأفكار الفكرية، ثم يتحقق من رجوع JSON يحتوي `source_metadata` و`extracted_nodes`. يمكن تغيير العنوان عبر `RAQA_API_URL` أو إضافة `RAQA_API_KEY` إذا أصبح المساعد محمياً.
+
 ## API
 
 | المسار | الوظيفة |
