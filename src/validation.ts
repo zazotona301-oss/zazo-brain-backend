@@ -19,6 +19,7 @@ export const roomSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 export const memorySchema = z.object({
+  id: idSchema.optional(),
   worldId: idSchema.optional(),
   roomId: idSchema.optional(),
   instruction: textField,
@@ -28,12 +29,14 @@ export const memorySchema = z.object({
   embedding: z.array(z.number().finite()).length(1536).optional()
 });
 export const conversationSchema = z.object({
+  id: idSchema.optional(),
   worldId: idSchema.optional(),
   roomId: idSchema.optional(),
   title: z.string().max(300).optional(),
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 export const messageSchema = z.object({
+  id: idSchema.optional(),
   conversationId: idSchema,
   role: z.enum(['system', 'user', 'assistant', 'tool']),
   content: textField,

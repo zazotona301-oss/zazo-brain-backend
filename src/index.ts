@@ -59,7 +59,9 @@ app.post('/api/memories', async (c) => {
     if (!roomId) return c.json({ error: 'configuration_error', message: 'No default room is configured' }, 503);
   }
   const vector = data.embedding ? `[${data.embedding.join(',')}]` : null;
-  const rows = await query(c.env, 'INSERT INTO memories (world_id, room_id, instruction, context, response, metadata, embedding) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::vector) RETURNING *', [worldId, roomId, data.instruction, data.context, data.response, jsonObject(data.metadata), vector]);
+  const rows = data.id
+    ? await query(c.env, 'INSERT INTO memories (id, world_id, room_id, instruction, context, response, metadata, embedding) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::vector) ON CONFLICT (id) DO UPDATE SET updated_at = now() RETURNING *', [data.id, worldId, roomId, data.instruction, data.context, data.response, jsonObject(data.metadata), vector])
+    : await query(c.env, 'INSERT INTO memories (world_id, room_id, instruction, context, response, metadata, embedding) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::vector) RETURNING *', [worldId, roomId, data.instruction, data.context, data.response, jsonObject(data.metadata), vector]);
   return c.json(rows[0], 201);
 });
 app.get('/api/memories/:id', async (c) => {
@@ -74,7 +76,9 @@ app.delete('/api/memories/:id', async (c) => {
 app.get('/api/conversations', async (c) => c.json(await query(c.env, 'SELECT * FROM conversations ORDER BY created_at DESC LIMIT $1', [limitFrom(c)])));
 app.post('/api/conversations', async (c) => {
   const data = await jsonBody(c.req.raw, conversationSchema);
-  const rows = await query(c.env, 'INSERT INTO conversations (world_id, room_id, title, metadata) VALUES ($1,$2,$3,$4::jsonb) RETURNING *', [data.worldId ?? null, data.roomId ?? null, data.title ?? null, jsonObject(data.metadata)]);
+  const rows = data.id
+    ? await query(c.env, 'INSERT INTO conversations (id, world_id, room_id, title, metadata) VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, updated_at = now() RETURNING *', [data.id, data.worldId ?? null, data.roomId ?? null, data.title ?? null, jsonObject(data.metadata)])
+    : await query(c.env, 'INSERT INTO conversations (world_id, room_id, title, metadata) VALUES ($1,$2,$3,$4::jsonb) RETURNING *', [data.worldId ?? null, data.roomId ?? null, data.title ?? null, jsonObject(data.metadata)]);
   return c.json(rows[0], 201);
 });
 app.put('/api/conversations/:id', async (c) => {
@@ -95,7 +99,9 @@ app.get('/api/messages', async (c) => c.json(await query(c.env, 'SELECT * FROM m
 app.get('/api/conversations/:conversationId/messages', async (c) => c.json(await query(c.env, 'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC LIMIT $2', [parseId(c.req.param('conversationId')), limitFrom(c)])));
 app.post('/api/messages', async (c) => {
   const data = await jsonBody(c.req.raw, messageSchema);
-  const rows = await query(c.env, 'INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1,$2,$3,$4::jsonb) RETURNING *', [data.conversationId, data.role, data.content, jsonObject(data.metadata)]);
+  const rows = data.id
+    ? await query(c.env, 'INSERT INTO messages (id, conversation_id, role, content, metadata) VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, metadata = EXCLUDED.metadata RETURNING *', [data.id, data.conversationId, data.role, data.content, jsonObject(data.metadata)])
+    : await query(c.env, 'INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1,$2,$3,$4::jsonb) RETURNING *', [data.conversationId, data.role, data.content, jsonObject(data.metadata)]);
   await query(c.env, 'UPDATE conversations SET updated_at = now() WHERE id = $1', [data.conversationId]);
   return c.json(rows[0], 201);
 });
