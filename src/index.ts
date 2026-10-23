@@ -9,6 +9,7 @@ import { activeContextSchema, chatRequestSchema, conversationSchema, idSchema, j
 type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
 app.use('*', cors({ origin: '*', allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }));
+const MAX_LORA_WEIGHTS_BYTES = 40 * 1024 * 1024;
 const jsonObject = (value: Record<string, unknown> | undefined): string => JSON.stringify(value ?? {});
 const limitFrom = (c: Context<AppEnv>): number => Math.min(Math.max(Number(c.req.query('limit') ?? '50') || 50, 1), 10_000);
 const parseId = (value: string): string => idSchema.parse(value);
@@ -41,8 +42,8 @@ app.post('/api/admin/lora-upload', async (c) => {
   if (configFile.name !== 'adapter_config.json' || weightsFile.name !== 'adapter_model.safetensors') {
     return c.json({ error: 'validation_error', message: 'أسماء الملفات غير مطابقة لملفات LoRA المطلوبة' }, 400);
   }
-  if (configFile.size < 1 || configFile.size > 1_000_000 || weightsFile.size < 1 || weightsFile.size >= 300 * 1024 * 1024) {
-    return c.json({ error: 'file_size_invalid', message: 'حجم ملف الإعداد غير صالح أو ملف الأوزان يتجاوز حد Cloudflare البالغ 300MB' }, 413);
+  if (configFile.size < 1 || configFile.size > 1_000_000 || weightsFile.size < 1 || weightsFile.size >= MAX_LORA_WEIGHTS_BYTES) {
+    return c.json({ error: 'file_size_invalid', message: 'ملف الأوزان يجب أن يكون أقل من 40 MiB لتجاوز حد طلب Cloudflare وحماية ذاكرة Worker' }, 413);
   }
   if (!/^[A-Za-z0-9_-]{3,48}$/.test(name)) {
     return c.json({ error: 'validation_error', message: 'اسم fine-tune يجب أن يكون 3–48 حرفًا أو رقمًا أو شرطة' }, 400);

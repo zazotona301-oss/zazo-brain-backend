@@ -64,10 +64,26 @@ jobs:
             echo "OPENAI_API_KEY is not configured in GitHub Secrets; skipping that optional Worker secret."
           fi
 
+  deploy-worker:
+    name: Deploy Worker
+    needs: [check, sync-worker-secrets]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Deploy zazo-brain-backend to Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy
+
   audio-smoke-test:
     name: Audio transcription smoke test
     if: github.event_name == 'workflow_dispatch'
-    needs: sync-worker-secrets
+    needs: [sync-worker-secrets, deploy-worker]
     runs-on: ubuntu-latest
     steps:
       - name: Download public speech sample
