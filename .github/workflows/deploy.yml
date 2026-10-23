@@ -41,20 +41,28 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Update OPENAI_API_KEY in Cloudflare Worker
+      - name: Sync required upload secrets to Cloudflare Worker
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ZAZO_ADMIN_UPLOAD_TOKEN: ${{ secrets.ZAZO_ADMIN_UPLOAD_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "OPENAI_API_KEY is not configured in GitHub Secrets; skipping Worker secret sync."
-            exit 0
-          fi
+          set -euo pipefail
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "CLOUDFLARE_API_TOKEN is required to sync GitHub Secrets into the Worker." >&2
             exit 1
           fi
-          printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --name zazo-brain-backend
+          if [ -z "$ZAZO_ADMIN_UPLOAD_TOKEN" ]; then
+            echo "ZAZO_ADMIN_UPLOAD_TOKEN is required to protect the adapter upload endpoint." >&2
+            exit 1
+          fi
+          printf '%s' "$CLOUDFLARE_API_TOKEN" | npx wrangler secret put CLOUDFLARE_API_TOKEN --name zazo-brain-backend
+          printf '%s' "$ZAZO_ADMIN_UPLOAD_TOKEN" | npx wrangler secret put ZAZO_ADMIN_UPLOAD_TOKEN --name zazo-brain-backend
+          if [ -n "$OPENAI_API_KEY" ]; then
+            printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --name zazo-brain-backend
+          else
+            echo "OPENAI_API_KEY is not configured in GitHub Secrets; skipping that optional Worker secret."
+          fi
 
   audio-smoke-test:
     name: Audio transcription smoke test
