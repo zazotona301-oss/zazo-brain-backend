@@ -8,7 +8,7 @@
 - رابط Worker: <https://zazo-brain-backend.zazotona301.workers.dev>.
 - أول بناء Cloudflare Workers Builds اكتمل بنجاح، و`GET /health` يعيد HTTP 200.
 - النشر التلقائي مرتبط بـGitHub؛ كل push إلى `main` يشغّل الفحوص ثم ينشر إلى Cloudflare.
-- مسارات `/api/*` عامة ومهيأة لـ CORS كي تتصل بها واجهة React مباشرة؛ لا تستخدم Supabase ولا Cloudflare Access.
+- معظم مسارات `/api/*` عامة ومهيأة لـ CORS كي تتصل بها واجهة React مباشرة؛ endpoint رفع LoRA فقط يتطلب رمزًا إداريًا ولا يستخدم رمز Cloudflare في المتصفح.
 - مخطط Neon نُشر على فرع `production` في قاعدة `neondb`، واختُبر قبل تطبيقه على الإنتاج.
 
 ## البنية وقاعدة البيانات
@@ -21,11 +21,15 @@
 
 ## الوصول العام والتخزين
 
-`GET /health` و`GET /api/health` عامان. جميع مسارات `/api/*` عامة مع CORS لأن الواجهة المنشورة لا تحمل جلسة Cloudflare Access. Neon عبر `HYPERDRIVE` هو مصدر البيانات الدائم، وKV عبر `ACTIVE_CONTEXT` و`ARCHIVE_STORE` مخصص للسياق النشط وأرشيفات JSONL. لا تضع أسرار Neon أو Cloudflare في الواجهة؛ حماية الإنتاج يجب أن تعتمد لاحقاً على rate limiting أو مفتاح تطبيق أو مصادقة مستخدم إذا أصبحت البيانات غير عامة. حد القائمة يصل إلى 10,000 سجل لدعم مستودع النسخ الاحتياطي.
+`GET /health` و`GET /api/health` عامان. أغلب مسارات `/api/*` عامة مع CORS لأن الواجهة المنشورة لا تحمل جلسة Cloudflare Access؛ الاستثناء هو `POST /api/admin/lora-upload` الذي يتحقق من `ZAZO_ADMIN_UPLOAD_TOKEN` server-side. Neon عبر `HYPERDRIVE` هو مصدر البيانات الدائم، وKV عبر `ACTIVE_CONTEXT` و`ARCHIVE_STORE` مخصص للسياق النشط وأرشيفات JSONL. لا تضع أسرار Neon أو Cloudflare في الواجهة. حد القائمة يصل إلى 10,000 سجل لدعم مستودع النسخ الاحتياطي.
 
 مسار `POST /api/transcribe` اختياري ويحوّل ملفاً صوتياً حتى 25MB إلى نص عبر OpenAI Whisper عند ضبط secret باسم `OPENAI_API_KEY` في Worker، ثم يمرر النص إلى Raqa لتنظيف الحشو والتكرار وأخطاء التفريغ. بدون `OPENAI_API_KEY` يعيد المسار `503` ولا يتم رفع الصوت؛ رابط Raqa الحالي يقبل chat JSON ولا يقبل multipart audio مباشرة.
 
 مسار `POST /api/intellectual-extract` يرسل النص إلى مساعد Raqa (`https://raqa-1zhm.vercel.app/api/chatController`) مع برمبت استخراج الأفكار الفكرية، ثم يتحقق من رجوع JSON يحتوي `source_metadata` و`extracted_nodes`. يمكن تغيير العنوان عبر `RAQA_API_URL` أو إضافة `RAQA_API_KEY` إذا أصبح المساعد محمياً.
+
+مسار `POST /api/chat` ينفذ استدلال Zazo: يسترجع حتى 6 ذكريات مطابقة من Neon، وما يصل إلى 4 أزواج سؤال/إجابة سابقة مطابقة من الرسائل المحفوظة، ويضمّن قيمة `active-context` من KV وسجل الحوار الحالي. افتراضيًا يرسل سياق Zazo إلى Raqa عبر `RAQA_API_URL` (الافتراضي `https://raqa-1zhm.vercel.app/api/chatController`) لاستخدام Groq عبر واجهة Raqa. كما يمكن اختيار `CHAT_PROVIDER=openai` مع `OPENAI_API_KEY`، أو `CHAT_PROVIDER=groq` مع `GROQ_API_KEY` للاتصال المباشر. بعد رفع محول LoRA متوافق، يمكن اختيار `CHAT_PROVIDER=cloudflare` مع `CLOUDFLARE_LORA_ID`؛ يستدعي Worker نموذج `@cf/google/gemma-2b-it-lora` عبر AI binding ويمرر إليه سياق RAG نفسه. يظل Raqa مستخدمًا أيضًا لتنظيف النصوص واستخراج المعرفة من المحتوى المرفوع.
+
+لرفع المحول من واجهة Zazo، اضبط الأسرار على Worker **ولا تضعها في Git أو الواجهة**: `npx wrangler secret put CLOUDFLARE_API_TOKEN` لرمز Cloudflare بصلاحية Workers AI Write، و`npx wrangler secret put ZAZO_ADMIN_UPLOAD_TOKEN` لرمز إداري طويل تختاره. endpoint `POST /api/admin/lora-upload` يقبل هذين الملفين فقط: `adapter_config.json` و`adapter_model.safetensors`، ويتحقق من `model_type=gemma` ورتبة LoRA والحجم قبل إنشاء fine-tune ورفع الملفات. المسار يتطلب رمز الرفع الإداري في ترويسة Bearer، وينشئ fine-tune جديدًا باسم تختاره؛ لا يعيد استخدام/استبدال الموجود. بعد نجاحه، اضبط `CHAT_PROVIDER=cloudflare` و`CLOUDFLARE_LORA_ID=<finetune-id>` كمتغيرات Worker. يُشترط أن يكون المحول مدرّبًا على قاعدة Gemma غير مكمّمة ومتوافقًا مع Cloudflare. تُحفظ رسائل المستخدم وردود Zazo عبر مسار الرسائل الحالي فتدخل المحادثات الجديدة في الاسترجاع اللاحق؛ هذه طريقة RAG/تعلم من المعرفة المحفوظة وليست ضبطًا دقيقًا مستمرًا لأوزان النموذج.
 
 ## API
 
@@ -38,6 +42,8 @@
 | `/api/memories` | CRUD للذاكرات بصيغة Instruction/Context/Response مع embedding اختياري |
 | `/api/conversations` | CRUD للمحادثات |
 | `/api/messages` و`/api/conversations/:conversationId/messages` | CRUD للرسائل |
+| `POST /api/chat` | استدلال Zazo باستخدام سجل الحوار ومعرفة Neon والسياق النشط في KV |
+| `POST /api/admin/lora-upload` | إنشاء fine-tune ورفع ملفات Gemma LoRA عبر رمز إداري، بعد ضبط أسرار Worker |
 | `GET /api/search?q=...` | بحث full-text في الذاكرات والرسائل |
 | `GET/PUT /api/context/active` | قراءة/حفظ السياق النشط في KV |
 | `POST /api/dataset/export` | تصدير الذاكرات إلى JSONL في KV |

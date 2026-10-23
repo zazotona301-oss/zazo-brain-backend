@@ -42,6 +42,13 @@ export const messageSchema = z.object({
   content: textField,
   metadata: z.record(z.string(), z.unknown()).optional()
 });
+export const chatRequestSchema = z.object({
+  conversationId: idSchema,
+  messages: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string().min(1).max(20_000)
+  })).min(1).max(40)
+});
 export const activeContextSchema = z.object({
   value: z.unknown(),
   ttlSeconds: z.number().int().positive().max(31_536_000).optional()

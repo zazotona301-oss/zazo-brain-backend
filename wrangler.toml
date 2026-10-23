@@ -6,6 +6,12 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = false
 
+[vars]
+CLOUDFLARE_ACCOUNT_ID = "f116fb028284f528f1eeb6f487088acf"
+
+[ai]
+binding = "AI"
+
 [observability]
 enabled = true
 

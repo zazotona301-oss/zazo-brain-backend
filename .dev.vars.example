@@ -1,1 +1,8 @@
 # No local secrets are required for the public Worker routes.
+# After uploading the fine-tune, enable its use locally with:
+# CHAT_PROVIDER=cloudflare
+# CLOUDFLARE_CHAT_MODEL=@cf/google/gemma-2b-it-lora
+# CLOUDFLARE_LORA_ID=replace-with-finetune-id-or-name
+# To enable the protected adapter upload endpoint locally, set these in .dev.vars:
+# CLOUDFLARE_API_TOKEN=your-token-with-Workers-AI-Write
+# ZAZO_ADMIN_UPLOAD_TOKEN=choose-a-long-random-admin-secret
