@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { z } from 'zod';
+import { createStreamedMultipartFile } from './lora-upload-stream';
 import type { Env } from './env';
 import { ConfigurationError, query } from './db';
 import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
@@ -95,10 +96,12 @@ app.post('/api/admin/lora-upload', async (c) => {
     return c.json({ error: 'cloudflare_finetune_create_failed', message: 'تعذر إنشاء fine-tune في Cloudflare؛ تحقق من صلاحية Workers AI Write' }, 502);
   }
   for (const [fileName, file] of [['adapter_model.safetensors', weightsFile], ['adapter_config.json', configFile]] as const) {
-    const assetForm = new FormData();
-    assetForm.append('file_name', fileName);
-    assetForm.append('file', new Blob([await file.arrayBuffer()], { type: file.type || 'application/octet-stream' }), fileName);
-    const uploadResponse = await fetch(`${apiBase}/${encodeURIComponent(fineTuneId)}/finetune-assets/`, { method: 'POST', headers, body: assetForm });
+    const streamedUpload = createStreamedMultipartFile(fileName, file);
+    const uploadResponse = await fetch(`${apiBase}/${encodeURIComponent(fineTuneId)}/finetune-assets/`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': streamedUpload.contentType },
+      body: streamedUpload.body,
+    });
     const uploadPayload = await uploadResponse.json().catch(() => ({})) as { success?: boolean };
     if (!uploadResponse.ok || !uploadPayload.success) {
       return c.json({ error: 'cloudflare_asset_upload_failed', message: `أُنشئ fine-tune بالمعرّف ${fineTuneId} لكن Cloudflare لم يقبل ${fileName}` }, 502);
