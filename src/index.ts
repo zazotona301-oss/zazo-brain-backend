@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { z } from 'zod';
 import type { Env } from './env';
 import { ConfigurationError, query } from './db';
@@ -10,25 +11,44 @@ type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
 app.use('*', cors({ origin: '*', allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }));
 const MAX_LORA_WEIGHTS_BYTES = 40 * 1024 * 1024;
+const accessJwksByDomain = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 const jsonObject = (value: Record<string, unknown> | undefined): string => JSON.stringify(value ?? {});
 const limitFrom = (c: Context<AppEnv>): number => Math.min(Math.max(Number(c.req.query('limit') ?? '50') || 50, 1), 10_000);
 const parseId = (value: string): string => idSchema.parse(value);
+
+async function isAuthorizedLoraUploader(request: Request, env: Env): Promise<boolean> {
+  const accessJwt = request.headers.get('Cf-Access-Jwt-Assertion');
+  const teamDomain = env.CF_ACCESS_TEAM_DOMAIN?.replace(/\/+$/, '');
+  const audience = env.CF_ACCESS_AUD;
+  const allowedEmail = env.CF_ACCESS_ADMIN_EMAIL?.trim().toLowerCase();
+  if (!accessJwt || !teamDomain || !audience || !allowedEmail || !teamDomain.startsWith('https://')) return false;
+
+  let jwks = accessJwksByDomain.get(teamDomain);
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL(`${teamDomain}/cdn-cgi/access/certs`));
+    accessJwksByDomain.set(teamDomain, jwks);
+  }
+
+  try {
+    const { payload } = await jwtVerify(accessJwt, jwks, { issuer: teamDomain, audience });
+    return typeof payload.email === 'string' && payload.email.trim().toLowerCase() === allowedEmail;
+  } catch {
+    return false;
+  }
+}
 
 app.get('/', (c) => c.json({ service: 'zazo-brain-backend', status: 'ok', storage: { neon: Boolean(c.env.HYPERDRIVE), kv: Boolean(c.env.ACTIVE_CONTEXT && c.env.ARCHIVE_STORE) } }));
 app.get('/health', (c) => c.json({ status: 'ok', service: 'zazo-brain-backend', time: new Date().toISOString() }));
 app.get('/api/health', (c) => c.json({ status: 'ok', storage: { neon: Boolean(c.env.HYPERDRIVE), kv: Boolean(c.env.ACTIVE_CONTEXT && c.env.ARCHIVE_STORE) } }));
 
 app.post('/api/admin/lora-upload', async (c) => {
-  const configuredAdminToken = c.env.ZAZO_ADMIN_UPLOAD_TOKEN;
   const cloudflareToken = c.env.CLOUDFLARE_API_TOKEN;
   const accountId = c.env.CLOUDFLARE_ACCOUNT_ID;
-  if (!configuredAdminToken || !cloudflareToken || !accountId) {
+  if (!cloudflareToken || !accountId || !c.env.CF_ACCESS_TEAM_DOMAIN || !c.env.CF_ACCESS_AUD || !c.env.CF_ACCESS_ADMIN_EMAIL) {
     return c.json({ error: 'service_not_configured', message: 'إعداد رفع LoRA غير مكتمل على الخادم' }, 503);
   }
-  const authorization = c.req.header('Authorization') || '';
-  const suppliedToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
-  if (!suppliedToken || suppliedToken.length !== configuredAdminToken.length || suppliedToken !== configuredAdminToken) {
-    return c.json({ error: 'unauthorized', message: 'رمز الرفع الإداري غير صحيح' }, 401);
+  if (!await isAuthorizedLoraUploader(c.req.raw, c.env)) {
+    return c.json({ error: 'unauthorized', message: 'سجّل الدخول عبر Cloudflare Access بالبريد المصرح به لإتمام الرفع' }, 401);
   }
   const form = await c.req.raw.formData();
   const configPart = form.get('adapter_config');

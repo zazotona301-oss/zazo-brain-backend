@@ -26,19 +26,21 @@ describe('public Worker API boundary', () => {
     expect(response.status).toBe(404);
   });
 
-  it('does not enable LoRA uploads until server-side secrets are configured', async () => {
+  it('does not enable LoRA uploads until Cloudflare and Access configuration is present', async () => {
     const response = await app.request('http://localhost/api/admin/lora-upload', { method: 'POST' }, {});
     expect(response.status).toBe(503);
   });
 
-  it('rejects LoRA upload requests with an invalid admin token', async () => {
+  it('rejects LoRA upload requests with an invalid Cloudflare Access JWT', async () => {
     const response = await app.request('http://localhost/api/admin/lora-upload', {
       method: 'POST',
-      headers: { Authorization: 'Bearer wrong-token' },
+      headers: { 'Cf-Access-Jwt-Assertion': 'not.a.jwt' },
     }, {
       CLOUDFLARE_ACCOUNT_ID: 'test-account',
       CLOUDFLARE_API_TOKEN: 'test-cloudflare-token',
-      ZAZO_ADMIN_UPLOAD_TOKEN: 'expected-admin-token',
+      CF_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com',
+      CF_ACCESS_AUD: 'test-audience',
+      CF_ACCESS_ADMIN_EMAIL: 'zazotona301@gmail.com',
     });
     expect(response.status).toBe(401);
   });

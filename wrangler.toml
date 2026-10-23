@@ -8,6 +8,9 @@ preview_urls = false
 
 [vars]
 CLOUDFLARE_ACCOUNT_ID = "f116fb028284f528f1eeb6f487088acf"
+CF_ACCESS_TEAM_DOMAIN = "https://late-river-2f1f.cloudflareaccess.com"
+CF_ACCESS_AUD = "d6c271627ac1b365b4de71b52f925554ebbecb5abb9b4d06ba82b545cdb43def"
+CF_ACCESS_ADMIN_EMAIL = "zazotona301@gmail.com"
 
 [ai]
 binding = "AI"

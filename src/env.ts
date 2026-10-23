@@ -14,11 +14,11 @@ export interface Env {
   CLOUDFLARE_LORA_ID?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_API_TOKEN?: string;
-  ZAZO_ADMIN_UPLOAD_TOKEN?: string;
   RAQA_API_URL?: string;
   RAQA_API_KEY?: string;
   CF_ACCESS_TEAM_DOMAIN?: string;
   CF_ACCESS_AUD?: string;
+  CF_ACCESS_ADMIN_EMAIL?: string;
 }
 
 export interface HyperdriveBinding {
