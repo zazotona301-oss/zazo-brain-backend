@@ -10,6 +10,19 @@ import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
 import { archiveRecord, deleteArchiveKey, deleteArchivePrefix } from './kv-archive';
 import { isAuthorizedRagDatasetWorkflow } from './github-oidc';
 import { activeContextSchema, chatRequestSchema, conversationSchema, idSchema, jsonBody, memorySchema, messageSchema, roomSchema, worldSchema } from './validation';
+import {
+  createTrainingUploadName,
+  fileExtension,
+  invalidArabicTrainingRows,
+  isSupportedTrainingFile,
+  MAX_TRAINING_FILE_BYTES,
+  MAX_TRAINING_REQUEST_BYTES,
+  MAX_TRAINING_TEXT_CHARACTERS,
+  parseTrainingFile,
+  totalTrainingTextCharacters,
+  trainingRowId,
+  trainingUploadIdSchema,
+} from './training-upload';
 
 type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
@@ -21,7 +34,7 @@ const parseId = (value: string): string => idSchema.parse(value);
 const knowledgeArchiveKey = (id: string): string => `knowledge/v1/${id}.json`;
 const chatArchiveKey = (conversationId: string, messageId: string): string => `chat/v1/${conversationId}/${messageId}.json`;
 
-async function isAuthorizedLoraUploader(request: Request, env: Env): Promise<boolean> {
+async function isAuthorizedAdminUploader(request: Request, env: Env): Promise<boolean> {
   const accessJwt = request.headers.get('Cf-Access-Jwt-Assertion');
   const teamDomain = env.CF_ACCESS_TEAM_DOMAIN?.replace(/\/+$/, '');
   const audience = env.CF_ACCESS_AUD;
@@ -52,7 +65,7 @@ app.post('/api/admin/lora-upload', async (c) => {
   if (!cloudflareToken || !accountId || !c.env.CF_ACCESS_TEAM_DOMAIN || !c.env.CF_ACCESS_AUD || !c.env.CF_ACCESS_ADMIN_EMAIL) {
     return c.json({ error: 'service_not_configured', message: 'إعداد رفع LoRA غير مكتمل على الخادم' }, 503);
   }
-  if (!await isAuthorizedLoraUploader(c.req.raw, c.env)) {
+  if (!await isAuthorizedAdminUploader(c.req.raw, c.env)) {
     return c.json({ error: 'unauthorized', message: 'سجّل الدخول عبر Cloudflare Access بالبريد المصرح به لإتمام الرفع' }, 401);
   }
   const form = await c.req.raw.formData();
@@ -112,6 +125,207 @@ app.post('/api/admin/lora-upload', async (c) => {
     }
   }
   return c.json({ success: true, fineTuneId, model: '@cf/google/gemma-2b-it-lora' }, 201);
+});
+
+app.post('/api/admin/training-upload', async (c) => {
+  if (!c.env.HYPERDRIVE?.connectionString || !c.env.ARCHIVE_STORE || !c.env.CF_ACCESS_TEAM_DOMAIN || !c.env.CF_ACCESS_AUD || !c.env.CF_ACCESS_ADMIN_EMAIL) {
+    return c.json({ error: 'service_not_configured', message: 'إعدادات Neon أو KV أو Cloudflare Access غير مكتملة على الخادم' }, 503);
+  }
+  if (!await isAuthorizedAdminUploader(c.req.raw, c.env)) {
+    return c.json({ error: 'unauthorized', message: 'سجّل الدخول عبر Cloudflare Access بالبريد المصرح به لإتمام رفع ملف التدريب' }, 401);
+  }
+  const contentType = c.req.header('content-type') || '';
+  if (!contentType.toLowerCase().startsWith('multipart/form-data;')) {
+    return c.json({ error: 'validation_error', message: 'يجب إرسال ملف التدريب والسجلات بصيغة multipart/form-data' }, 400);
+  }
+  const requestBytes = Number(c.req.header('content-length') || 0);
+  if (Number.isFinite(requestBytes) && requestBytes > MAX_TRAINING_REQUEST_BYTES) {
+    return c.json({ error: 'file_too_large', message: 'حجم طلب الرفع الكلي تجاوز 25 MiB' }, 413);
+  }
+
+  let form: FormData;
+  try {
+    form = await c.req.raw.formData();
+  } catch {
+    return c.json({ error: 'invalid_multipart', message: 'تعذر قراءة ملف التدريب؛ أعد اختياره وحاول مجددًا' }, 400);
+  }
+  const filePart = form.get('file');
+  if (!filePart || typeof filePart !== 'object' || !('arrayBuffer' in filePart) || !('name' in filePart)) {
+    return c.json({ error: 'validation_error', message: 'ملف التدريب مطلوب' }, 400);
+  }
+  const file = filePart as File;
+  if (!isSupportedTrainingFile(file.name)) {
+    return c.json({ error: 'unsupported_file', message: 'ارفع ملفًا منظمًا JSON أو JSONL أو NDJSON أو CSV أو TSV؛ لا تُحوّل الصفحة الكتب أو النص الخام إلى أسئلة تلقائيًا' }, 400);
+  }
+  if (file.size < 1 || file.size > MAX_TRAINING_FILE_BYTES) {
+    return c.json({ error: 'file_too_large', message: 'يجب أن يكون الملف المنظم بين بايت واحد و8 MiB' }, 413);
+  }
+
+  const uploadIdResult = trainingUploadIdSchema.safeParse(form.get('uploadId'));
+  if (!uploadIdResult.success) return c.json({ error: 'validation_error', message: 'معرّف الرفع غير صالح؛ أعد اختيار الملف' }, 400);
+  const uploadId = uploadIdResult.data;
+  let rows: ReturnType<typeof parseTrainingFile>;
+  try {
+    rows = parseTrainingFile(file.name, await file.text());
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'تنسيق الملف غير صالح';
+    return c.json({ error: 'invalid_training_file', message: `تعذر قراءة ملف التدريب: ${detail}` }, 400);
+  }
+  if (totalTrainingTextCharacters(rows) > MAX_TRAINING_TEXT_CHARACTERS) {
+    return c.json({ error: 'file_too_large', message: 'إجمالي نصوص الأمثلة تجاوز 3 ملايين حرف؛ قسّم البيانات على أكثر من ملف' }, 413);
+  }
+  const invalidRows = invalidArabicTrainingRows(rows);
+  if (invalidRows.length) {
+    return c.json({
+      error: 'arabic_training_required',
+      message: 'لم يُحفظ الملف: السؤال والإجابة والسياق إن وُجد يجب أن تكون عربية. صحّح الصفوف المشار إليها ثم أعد الرفع.',
+      invalidRows: invalidRows.slice(0, 50),
+      invalidRowCount: invalidRows.length,
+    }, 400);
+  }
+
+  const worldIdValue = form.get('worldId');
+  let worldId: string | null = null;
+  let roomId: string | null = null;
+  if (typeof worldIdValue === 'string' && worldIdValue.trim()) {
+    const parsedWorldId = idSchema.safeParse(worldIdValue.trim());
+    if (!parsedWorldId.success) return c.json({ error: 'validation_error', message: 'مجال المعرفة المختار غير صالح؛ أعد تحميل الصفحة' }, 400);
+    const world = await query<{ id: string }>(c.env, 'SELECT id FROM worlds WHERE id = $1 LIMIT 1', [parsedWorldId.data]);
+    if (!world[0]) return c.json({ error: 'not_found', message: 'مجال المعرفة المختار لم يعد موجودًا' }, 404);
+    worldId = world[0].id;
+  } else {
+    const defaults = await query<{ id: string }>(c.env, "SELECT id FROM rooms WHERE slug = 'general' ORDER BY created_at ASC LIMIT 1");
+    roomId = defaults[0]?.id ?? null;
+    if (!roomId) return c.json({ error: 'configuration_error', message: 'لا توجد غرفة معرفة افتراضية للحفظ' }, 503);
+  }
+
+  const fileBytes = await file.arrayBuffer();
+  const fileDigest = await crypto.subtle.digest('SHA-256', fileBytes);
+  const fileSha256 = Array.from(new Uint8Array(fileDigest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  const existingUpload = await query<{ id: string; metadata: Record<string, unknown> }>(
+    c.env,
+    "SELECT id, metadata FROM memories WHERE metadata->>'upload_id' = $1 LIMIT 1",
+    [uploadId],
+  );
+  if (existingUpload[0]) {
+    const existingMetadata = existingUpload[0].metadata || {};
+    if (existingMetadata.upload_file_sha256 !== fileSha256) {
+      return c.json({ error: 'upload_id_conflict', message: 'معرّف الرفع مستخدم لملف مختلف؛ أعد اختيار الملف للحصول على معرّف جديد' }, 409);
+    }
+    try {
+      const exported = await exportDataset(c.env, 'training-file-retry');
+      return c.json({
+        success: true,
+        duplicateUpload: true,
+        uploadId,
+        uploadName: existingMetadata.upload_name,
+        originalFileName: existingMetadata.original_file_name,
+        sourceFileKey: existingMetadata.source_file_key,
+        importedRows: rows.length,
+        exportUpdated: true,
+        ...exported,
+      });
+    } catch {
+      return c.json({
+        success: true,
+        duplicateUpload: true,
+        uploadId,
+        uploadName: existingMetadata.upload_name,
+        originalFileName: existingMetadata.original_file_name,
+        sourceFileKey: existingMetadata.source_file_key,
+        importedRows: rows.length,
+        exportUpdated: false,
+        message: 'الملف محفوظ مسبقًا في Neon؛ تعذر تحديث manifest الآن. لا تعِد رفعه، ويمكن إعادة تشغيل Workflow تجهيز البيانات.',
+      }, 202);
+    }
+  }
+
+  const createdAt = new Date();
+  const uploadName = createTrainingUploadName(file.name, uploadId, createdAt);
+  const extension = fileExtension(file.name);
+  const sourceFileKey = `training/uploads/${uploadName}/source.${extension}`;
+  try {
+    await c.env.ARCHIVE_STORE.put(sourceFileKey, fileBytes, {
+      expirationTtl: ARCHIVE_TTL_SECONDS,
+      metadata: { uploadId, uploadName, originalFileName: file.name.slice(0, 200), sha256: fileSha256 },
+    });
+  } catch {
+    return c.json({ error: 'source_archive_failed', message: 'تعذر حفظ نسخة الملف الأصلي في KV؛ لم تُضف أمثلته إلى Neon' }, 502);
+  }
+
+  let inserted: { id: string }[];
+  try {
+    const uploadRecords = await Promise.all(rows.map(async (row, index) => ({
+      id: await trainingRowId(uploadId, index + 1),
+      instruction: row.instruction.normalize('NFC').replace(/\r\n?/g, '\n').trim(),
+      context: row.context.normalize('NFC').replace(/\r\n?/g, '\n').trim(),
+      response: row.response.normalize('NFC').replace(/\r\n?/g, '\n').trim(),
+      metadata: {
+        ingestion: 'training_file_upload',
+        source_type: 'training-file-upload',
+        source_name: uploadName,
+        original_file_name: file.name.slice(0, 200),
+        source_file_key: sourceFileKey,
+        source_file_sha256: fileSha256,
+        upload_file_sha256: fileSha256,
+        source_file_size: file.size,
+        source_row: row.sourceRow ?? index + 1,
+        upload_id: uploadId,
+        upload_name: uploadName,
+        training_language: 'ar',
+        needs_review: false,
+        arabic_reviewed: true,
+        approved_at: createdAt.toISOString(),
+        tags: row.tags,
+      },
+    })));
+    inserted = await query<{ id: string }>(c.env, `
+      INSERT INTO memories (id, world_id, room_id, instruction, context, response, metadata)
+      SELECT row_data.id, $1::uuid, $2::uuid, row_data.instruction, row_data.context, row_data.response, row_data.metadata
+      FROM jsonb_to_recordset($3::jsonb) AS row_data(id uuid, instruction text, context text, response text, metadata jsonb)
+      ON CONFLICT (id) DO NOTHING
+      RETURNING id
+    `, [worldId, roomId, JSON.stringify(uploadRecords)]);
+  } catch (error) {
+    let sourceCleanupFailed = false;
+    try {
+      await c.env.ARCHIVE_STORE.delete(sourceFileKey);
+    } catch {
+      sourceCleanupFailed = true;
+    }
+    console.error('Training upload Neon insert failed', { uploadId, error: error instanceof Error ? error.message : 'unknown error' });
+    return c.json({
+      error: 'database_write_failed',
+      message: 'تعذر حفظ أمثلة التدريب في Neon؛ لم يكتمل الرفع. أعد المحاولة بنفس الصفحة والملف.',
+      ...(sourceCleanupFailed ? { orphanedSourceFileKey: sourceFileKey } : {}),
+    }, 502);
+  }
+
+  try {
+    const exported = await exportDataset(c.env, 'training-file-upload');
+    return c.json({
+      success: true,
+      duplicateUpload: false,
+      uploadId,
+      uploadName,
+      originalFileName: file.name,
+      sourceFileKey,
+      importedRows: inserted.length,
+      exportUpdated: true,
+      ...exported,
+    }, 201);
+  } catch {
+    return c.json({
+      success: true,
+      uploadId,
+      uploadName,
+      originalFileName: file.name,
+      sourceFileKey,
+      importedRows: inserted.length,
+      exportUpdated: false,
+      message: 'حُفظ الملف والأمثلة في Neon/KV، لكن تعذر تحديث manifest التدريبي. لا تعِد الرفع؛ شغّل Workflow تجهيز البيانات لإعادة التصدير.',
+    }, 202);
+  }
 });
 
 app.post('/api/transcribe', async (c) => {

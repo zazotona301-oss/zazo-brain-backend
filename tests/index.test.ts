@@ -50,6 +50,36 @@ describe('public Worker API boundary', () => {
     expect(response.status).toBe(401);
   });
 
+  it('does not enable training uploads until Neon, KV, and Access configuration are present', async () => {
+    const response = await app.request('http://localhost/api/admin/training-upload', { method: 'POST' }, {});
+    expect(response.status).toBe(503);
+  });
+
+  it('requires an authenticated Cloudflare Access session for training uploads', async () => {
+    const response = await app.request('http://localhost/api/admin/training-upload', { method: 'POST' }, {
+      HYPERDRIVE: { connectionString: 'postgres://not-used' },
+      ARCHIVE_STORE: {},
+      CF_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com',
+      CF_ACCESS_AUD: 'test-audience',
+      CF_ACCESS_ADMIN_EMAIL: 'zazotona301@gmail.com',
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it('rejects training uploads with an invalid Cloudflare Access JWT', async () => {
+    const response = await app.request('http://localhost/api/admin/training-upload', {
+      method: 'POST',
+      headers: { 'Cf-Access-Jwt-Assertion': 'not.a.jwt' },
+    }, {
+      HYPERDRIVE: { connectionString: 'postgres://not-used' },
+      ARCHIVE_STORE: {},
+      CF_ACCESS_TEAM_DOMAIN: 'https://team.cloudflareaccess.com',
+      CF_ACCESS_AUD: 'test-audience',
+      CF_ACCESS_ADMIN_EMAIL: 'zazotona301@gmail.com',
+    });
+    expect(response.status).toBe(401);
+  });
+
   it('validates chat requests before attempting inference', async () => {
     const response = await app.request('http://localhost/api/chat', {
       method: 'POST',
