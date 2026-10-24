@@ -26,6 +26,11 @@ describe('public Worker API boundary', () => {
     expect(response.status).toBe(404);
   });
 
+  it('requires the trusted GitHub OIDC workflow before exporting Neon data', async () => {
+    const response = await app.request('http://localhost/api/dataset/export', { method: 'POST' }, {});
+    expect(response.status).toBe(401);
+  });
+
   it('does not enable LoRA uploads until Cloudflare and Access configuration is present', async () => {
     const response = await app.request('http://localhost/api/admin/lora-upload', { method: 'POST' }, {});
     expect(response.status).toBe(503);

@@ -7,6 +7,7 @@ import type { Env } from './env';
 import { ConfigurationError, query } from './db';
 import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
 import { archiveRecord, deleteArchiveKey, deleteArchivePrefix } from './kv-archive';
+import { isAuthorizedRagDatasetWorkflow } from './github-oidc';
 import { activeContextSchema, chatRequestSchema, conversationSchema, idSchema, jsonBody, memorySchema, messageSchema, roomSchema, worldSchema } from './validation';
 
 type AppEnv = { Bindings: Env };
@@ -345,7 +346,10 @@ app.put('/api/context/active', async (c) => {
 });
 
 app.post('/api/dataset/export', async (c) => {
-  const result = await exportDataset(c.env, 'manual');
+  if (!await isAuthorizedRagDatasetWorkflow(c.req.raw)) {
+    return c.json({ error: 'unauthorized', message: 'يتطلب تصدير بيانات RAG هوية GitHub Actions المصرح بها' }, 401);
+  }
+  const result = await exportDataset(c.env, 'github-actions');
   return c.json(result, 202);
 });
 
@@ -358,16 +362,7 @@ app.onError((error, c) => {
 app.notFound((c) => c.json({ error: 'not_found' }, 404));
 
 export default {
-  fetch: app.fetch,
-  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-    try {
-      const result = await exportDataset(env, 'scheduled');
-      console.log('Scheduled dataset export completed', result);
-    } catch (error) {
-      console.error('Scheduled dataset export failed', error);
-      throw error;
-    }
-  }
+  fetch: app.fetch
 };
 
 export { app };

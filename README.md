@@ -46,7 +46,7 @@
 | `POST /api/admin/lora-upload` | إنشاء fine-tune ورفع ملفات Gemma LoRA عبر رمز إداري، بعد ضبط أسرار Worker |
 | `GET /api/search?q=...` | بحث full-text في الذاكرات والرسائل |
 | `GET/PUT /api/context/active` | قراءة/حفظ السياق النشط في KV |
-| `POST /api/dataset/export` | تصدير الذاكرات إلى JSONL في KV |
+| `POST /api/dataset/export` | تجهيز بيانات RAG في KV؛ محمي بهوية GitHub Actions OIDC المحددة |
 | `PUT /api/conversations/:id` | تحديث عنوان المحادثة |
 
 ## العوالم والغرف
@@ -63,13 +63,15 @@
 
 ## الذاكرة والتصدير
 
-كل سجل ذاكرة يصلح لعائلة بيانات التدريب ويصدر بهذا الشكل:
+تعمل GitHub Action `rag-dataset-prep.yml` يوميًا عند `03:17 UTC`، ويمكن تشغيلها يدويًا من تبويب **Actions** عبر **Run workflow**. تستخدم Runner قياسيًا ولا تحتاج GPU أو أسرار GitHub: تحصل على OIDC قصير العمر، ثم تطلب من Worker تجهيز البيانات داخل Cloudflare. لا تُرسل نصوص Neon إلى سجلات GitHub ولا تُرفع كـArtifacts، والـAction لا تدرّب النموذج ولا تغيّر أوزانه.
 
-```json
-{"instruction":"...","context":"...","response":"...","metadata":{}}
-```
+يقرأ Worker صفحات من كل سجلات `memories` في Neon، ويكوّن أزواجًا متجاورة من رسائل `user` ثم `assistant`. يطبّع نهايات الأسطر والمسافات، ويزيل التكرار النصي. لا يصدّر بيانات العوالم والغرف لأنها بيانات تنظيمية وليست أمثلة RAG.
 
-التصدير يتعامل مع `memories` فقط، ويقسم JSONL عند حدود السجلات إلى chunks بحد أقصى `1 MiB` محسوباً ببايتات UTF-8. يُنشأ manifest ويحفظ مع كل chunk في `ARCHIVE_STORE` لمدة 31 يوماً. التصدير المجدول يعمل يومياً عند `02:00 UTC`؛ ويمكن تشغيله يدوياً عبر API. هذا أرشيف JSONL في KV وليس نسخة PostgreSQL كاملة ولا PITR.
+السجلات المكتملة غير الموسومة `needs_review=true` تتحول إلى رسائل `user/assistant` جاهزة لدفتر Colab. أما المحادثات وأي معرفة موسومة للمراجعة أو ناقصة فتُحفظ منفصلة بحقول `candidate_*` كي لا تدخل تلقائيًا في التدريب. تُقسّم ملفات JSONL إلى chunks لا تتجاوز `1 MiB`، وتحفظ مع manifest ورابط ثابت لأحدث manifest (`exports/zazo-rag-prepared/latest.json`) في `ARCHIVE_STORE` لمدة 31 يومًا.
+
+دفتر Colab المحلي `colab/zazo_kv_unsloth_qlora_colab.ipynb` يقرأ أحدث `readyChunkKeys` فقط عند وجود هذا التصدير، فلا يخلط المحادثات غير المراجعة أو نسخ الأرشيف الأقدم. بعد تجهيز البيانات، يبقى تشغيل التدريب يدويًا من Colab؛ GitHub Action لا ينشئ محول LoRA ولا يرفعه إلى Cloudflare.
+
+مسار `POST /api/dataset/export` يرفض الطلبات العامة. يقبل فقط JWT صادرًا من GitHub OIDC لهذا المستودع وWorkflow المحدد على فرع `main`؛ لا يوجد Cloudflare API token محفوظ في GitHub لهذا الغرض.
 
 ## النشر التلقائي على Cloudflare
 
@@ -80,7 +82,7 @@
 - Root directory: `/`.
 - Preview URLs معطّلة في Wrangler؛ رابط Worker الإنتاجي هو الرابط أعلاه.
 
-GitHub Actions يشغّل الفحوص والتحقق من bundle فقط؛ Cloudflare Workers Builds يتولى النشر المباشر من GitHub. لا يحتاج النشر إلى أسرار GitHub، وتبقى بيانات قاعدة البيانات داخل Hyperdrive.
+Workflow النشر في GitHub Actions يشغّل الفحوص والتحقق من bundle؛ Cloudflare Workers Builds يتولى نشر Worker من GitHub. Workflow تجهيز بيانات RAG اليومي مستقل ومشروح في قسم الذاكرة والتصدير. لا يحتاج النشر أو التصدير إلى أسرار قاعدة بيانات محفوظة في GitHub، وتبقى بيانات Neon داخل Hyperdrive.
 
 ## التطوير وفحوص الجودة
 
