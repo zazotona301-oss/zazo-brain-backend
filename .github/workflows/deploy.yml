@@ -5,13 +5,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'migrations/**'
-      - 'tests/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'wrangler.toml'
-      - '.github/workflows/deploy.yml'
+      - "src/**"
+      - "migrations/**"
+      - "tests/**"
+      - "package.json"
+      - "package-lock.json"
+      - "wrangler.toml"
+      - ".github/workflows/deploy.yml"
 
 permissions:
   contents: read
@@ -32,7 +32,8 @@ jobs:
 
   sync-worker-secrets:
     name: Sync Worker secrets
-    needs: check
+    # Deploy first: Wrangler cannot edit secrets while a newer version is undeployed.
+    needs: deploy-worker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +42,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Deploy zazo-brain-backend to Cloudflare
+      - name: Sync Worker secrets to Cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -60,7 +61,7 @@ jobs:
 
   deploy-worker:
     name: Deploy Worker
-    needs: [check, sync-worker-secrets]
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
