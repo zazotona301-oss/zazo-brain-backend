@@ -42,7 +42,7 @@
 | `/api/memories` | CRUD للذاكرات بصيغة Instruction/Context/Response مع embedding اختياري |
 | `/api/conversations` | CRUD للمحادثات |
 | `/api/messages` و`/api/conversations/:conversationId/messages` | CRUD للرسائل |
-| `POST /api/chat` | استدلال Zazo باستخدام سجل الحوار ومعرفة Neon والسياق النشط في KV |
+| `POST /api/chat` | استدلال Zazo باستخدام سجل الحوار ومعرفة Neon والسياق النشط في KV؛ يحدّ مدخلات النموذج إلى 6000 حرف كحد أقصى ويختصر الأقدم أولًا لتفادي تجاوز نافذة Gemma |
 | `POST /api/admin/lora-upload` | إنشاء fine-tune ورفع ملفات Gemma LoRA عبر رمز إداري، بعد ضبط أسرار Worker |
 | `GET /api/search?q=...` | بحث full-text في الذاكرات والرسائل |
 | `GET/PUT /api/context/active` | قراءة/حفظ السياق النشط في KV |
