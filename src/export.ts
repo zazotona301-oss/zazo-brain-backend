@@ -75,6 +75,13 @@ function metadataObject(value: unknown): Record<string, unknown> {
   return safe && typeof safe === 'object' && !Array.isArray(safe) ? safe as Record<string, unknown> : {};
 }
 
+function isArabicTrainingText(value: string): boolean {
+  const letters = Array.from(value).filter((character) => /\p{L}/u.test(character));
+  if (!letters.length) return false;
+  const arabicLetters = letters.filter((character) => /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(character)).length;
+  return arabicLetters / letters.length >= 0.4;
+}
+
 function dedupeKey(question: string, context: string, answer: string): string {
   return [question, context, answer]
     .map((part) => normalizeDatasetText(part).replace(/\s+/g, ' ').toLocaleLowerCase('ar'))
@@ -88,7 +95,11 @@ export function prepareMemoryRecord(row: MemoryRow): { bucket: ExportBucket; key
   if (!instruction && !context && !response) return { bucket: 'skip', key: '' };
 
   const sourceMetadata = metadataObject(row.metadata);
-  const needsReview = sourceMetadata.needs_review === true || !instruction || !response;
+  const arabicEligible = sourceMetadata.training_language === 'ar'
+    && isArabicTrainingText(instruction)
+    && isArabicTrainingText(response)
+    && (!context || isArabicTrainingText(context));
+  const needsReview = sourceMetadata.needs_review === true || !instruction || !response || !arabicEligible;
   const key = dedupeKey(instruction, context, response);
   const metadata = {
     ...sourceMetadata,
@@ -96,6 +107,7 @@ export function prepareMemoryRecord(row: MemoryRow): { bucket: ExportBucket; key
     source_record_id: row.id,
     source_created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
     needs_review: needsReview,
+    ...(!arabicEligible ? { training_review_reason: 'arabic_training_required' } : {}),
   };
 
   if (needsReview) {

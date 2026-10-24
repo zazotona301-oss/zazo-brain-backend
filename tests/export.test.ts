@@ -20,7 +20,7 @@ describe('RAG dataset preparation', () => {
       instruction: 'ما معنى الوعي؟',
       context: 'سياق علمي موثّق',
       response: 'الإجابة المراجَعة',
-      metadata: { needs_review: false },
+      metadata: { needs_review: false, training_language: 'ar' },
       created_at: new Date('2026-10-24T00:00:00Z'),
     });
     expect(prepared.bucket).toBe('ready');
@@ -29,6 +29,29 @@ describe('RAG dataset preparation', () => {
       { role: 'assistant', content: 'الإجابة المراجَعة' },
     ]);
     expect(prepared.record?.metadata).toMatchObject({ source_type: 'knowledge', needs_review: false });
+  });
+
+  it('keeps untagged or non-Arabic examples out of the Colab-ready training set', () => {
+    const untagged = prepareMemoryRecord({
+      id: 'memory-untagged',
+      instruction: 'ما معنى الوعي؟',
+      context: '',
+      response: 'الإجابة المراجَعة',
+      metadata: { needs_review: false },
+      created_at: '2026-10-24T00:00:00Z',
+    });
+    const nonArabic = prepareMemoryRecord({
+      id: 'memory-non-arabic',
+      instruction: 'What is awareness?',
+      context: '',
+      response: 'Awareness is the ability to notice.',
+      metadata: { needs_review: false, training_language: 'ar' },
+      created_at: '2026-10-24T00:00:00Z',
+    });
+    expect(untagged.bucket).toBe('review');
+    expect(nonArabic.bucket).toBe('review');
+    expect(untagged.record?.metadata).toMatchObject({ needs_review: true, training_review_reason: 'arabic_training_required' });
+    expect(nonArabic.record).not.toHaveProperty('messages');
   });
 
   it('keeps flagged or incomplete knowledge separate from training-ready examples', () => {
