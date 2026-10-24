@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { z } from 'zod';
 import { createStreamedMultipartFile, isAllowedLoraWeightsSize } from './lora-upload-stream';
+import { resolveActiveLoraId } from './lora-config';
 import type { Env } from './env';
 import { ConfigurationError, query } from './db';
 import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
@@ -297,7 +298,7 @@ app.post('/api/chat', async (c) => {
   const latestUserMessage = [...data.messages].reverse().find((message) => message.role === 'user');
   if (!latestUserMessage) return c.json({ error: 'validation_error', message: 'A user message is required' }, 400);
   if (!c.env.AI) throw new ConfigurationError('Workers AI binding is not configured');
-  if (!c.env.CLOUDFLARE_LORA_ID) throw new ConfigurationError('CLOUDFLARE_LORA_ID is not configured');
+  const activeLoraId = await resolveActiveLoraId(c.env.ACTIVE_CONTEXT, c.env.CLOUDFLARE_LORA_ID);
   if (!c.env.HYPERDRIVE?.connectionString) throw new ConfigurationError('HYPERDRIVE binding is not configured');
 
   const memoryText = "instruction || ' ' || context || ' ' || response";
@@ -312,14 +313,14 @@ app.post('/api/chat', async (c) => {
   try {
     const payload = await c.env.AI.run(
       c.env.CLOUDFLARE_CHAT_MODEL || '@cf/google/gemma-2b-it-lora',
-      { messages: chatMessages, lora: c.env.CLOUDFLARE_LORA_ID, temperature: 0.4, max_tokens: 512 }
+      { messages: chatMessages, ...(activeLoraId ? { lora: activeLoraId } : {}), temperature: 0.4, max_tokens: 512 }
     ) as { response?: unknown };
     reply = typeof payload.response === 'string' ? payload.response.trim() : '';
   } catch {
     return c.json({ error: 'assistant_failed', message: 'Cloudflare Workers AI inference failed' }, 502);
   }
   if (!reply) return c.json({ error: 'assistant_failed', message: 'The model returned an empty answer' }, 502);
-  return c.json({ content: reply, metadata: { provider: 'cloudflare-workers-ai', retrievedMemories: memories.length, retrievedConversationExamples: learnedConversations.length, usedActiveContext: activeContext != null } });
+  return c.json({ content: reply, metadata: { provider: 'cloudflare-workers-ai', activeLoraId: activeLoraId ?? null, retrievedMemories: memories.length, retrievedConversationExamples: learnedConversations.length, usedActiveContext: activeContext != null } });
 });
 
 app.get('/api/search', async (c) => {
