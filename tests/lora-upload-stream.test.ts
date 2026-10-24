@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createStreamedMultipartFile } from '../src/lora-upload-stream';
+import { createStreamedMultipartFile, isAllowedLoraWeightsSize, MAX_LORA_WEIGHTS_BYTES } from '../src/lora-upload-stream';
 
 async function collect(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const reader = stream.getReader();
@@ -25,6 +25,17 @@ function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
 }
 
 describe('streamed LoRA multipart upload', () => {
+  it('allows weights below the 80 MiB Worker-safe limit', () => {
+    expect(isAllowedLoraWeightsSize(MAX_LORA_WEIGHTS_BYTES - 1)).toBe(true);
+  });
+
+  it('rejects empty, exact-limit, oversized, and unsafe sizes', () => {
+    expect(isAllowedLoraWeightsSize(0)).toBe(false);
+    expect(isAllowedLoraWeightsSize(MAX_LORA_WEIGHTS_BYTES)).toBe(false);
+    expect(isAllowedLoraWeightsSize(MAX_LORA_WEIGHTS_BYTES + 1)).toBe(false);
+    expect(isAllowedLoraWeightsSize(Number.MAX_SAFE_INTEGER + 1)).toBe(false);
+  });
+
   it('streams multipart headers, the exact binary file bytes, and the closing boundary', async () => {
     const sourceBytes = new Uint8Array([0, 1, 2, 127, 128, 254, 255]);
     const file = new Blob([sourceBytes], { type: 'application/octet-stream' });

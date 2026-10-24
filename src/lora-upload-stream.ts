@@ -1,5 +1,13 @@
 const encoder = new TextEncoder();
 
+// Workers Free/Pro requests are limited to 100 MB; leave room for multipart
+// framing, adapter_config.json, and Worker runtime memory.
+export const MAX_LORA_WEIGHTS_BYTES = 80 * 1024 * 1024;
+
+export function isAllowedLoraWeightsSize(size: number): boolean {
+  return Number.isSafeInteger(size) && size > 0 && size < MAX_LORA_WEIGHTS_BYTES;
+}
+
 export interface StreamedMultipartFile {
   body: ReadableStream<Uint8Array>;
   contentType: string;

@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { z } from 'zod';
-import { createStreamedMultipartFile } from './lora-upload-stream';
+import { createStreamedMultipartFile, isAllowedLoraWeightsSize } from './lora-upload-stream';
 import type { Env } from './env';
 import { ConfigurationError, query } from './db';
 import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
@@ -13,7 +13,6 @@ import { activeContextSchema, chatRequestSchema, conversationSchema, idSchema, j
 type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
 app.use('*', cors({ origin: '*', allowHeaders: ['Content-Type', 'Authorization'], allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }));
-const MAX_LORA_WEIGHTS_BYTES = 40 * 1024 * 1024;
 const accessJwksByDomain = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 const jsonObject = (value: Record<string, unknown> | undefined): string => JSON.stringify(value ?? {});
 const limitFrom = (c: Context<AppEnv>): number => Math.min(Math.max(Number(c.req.query('limit') ?? '50') || 50, 1), 10_000);
@@ -67,8 +66,8 @@ app.post('/api/admin/lora-upload', async (c) => {
   if (configFile.name !== 'adapter_config.json' || weightsFile.name !== 'adapter_model.safetensors') {
     return c.json({ error: 'validation_error', message: 'أسماء الملفات غير مطابقة لملفات LoRA المطلوبة' }, 400);
   }
-  if (configFile.size < 1 || configFile.size > 1_000_000 || weightsFile.size < 1 || weightsFile.size >= MAX_LORA_WEIGHTS_BYTES) {
-    return c.json({ error: 'file_size_invalid', message: 'ملف الأوزان يجب أن يكون أقل من 40 MiB لتجاوز حد طلب Cloudflare وحماية ذاكرة Worker' }, 413);
+  if (configFile.size < 1 || configFile.size > 1_000_000 || !isAllowedLoraWeightsSize(weightsFile.size)) {
+    return c.json({ error: 'file_size_invalid', message: 'ملف الأوزان يجب أن يكون أقل من 80 MiB؛ ارفع الملفات الكبيرة مباشرةً إلى Cloudflare AI من Colab' }, 413);
   }
   if (!/^[A-Za-z0-9_-]{3,48}$/.test(name)) {
     return c.json({ error: 'validation_error', message: 'اسم fine-tune يجب أن يكون 3–48 حرفًا أو رقمًا أو شرطة' }, 400);
