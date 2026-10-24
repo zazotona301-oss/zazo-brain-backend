@@ -6,6 +6,7 @@ import { createStreamedMultipartFile } from './lora-upload-stream';
 import type { Env } from './env';
 import { ConfigurationError, query } from './db';
 import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
+import { archiveRecord, deleteArchiveKey, deleteArchivePrefix } from './kv-archive';
 import { activeContextSchema, chatRequestSchema, conversationSchema, idSchema, jsonBody, memorySchema, messageSchema, roomSchema, worldSchema } from './validation';
 
 type AppEnv = { Bindings: Env };
@@ -16,6 +17,8 @@ const accessJwksByDomain = new Map<string, ReturnType<typeof createRemoteJWKSet>
 const jsonObject = (value: Record<string, unknown> | undefined): string => JSON.stringify(value ?? {});
 const limitFrom = (c: Context<AppEnv>): number => Math.min(Math.max(Number(c.req.query('limit') ?? '50') || 50, 1), 10_000);
 const parseId = (value: string): string => idSchema.parse(value);
+const knowledgeArchiveKey = (id: string): string => `knowledge/v1/${id}.json`;
+const chatArchiveKey = (conversationId: string, messageId: string): string => `chat/v1/${conversationId}/${messageId}.json`;
 
 async function isAuthorizedLoraUploader(request: Request, env: Env): Promise<boolean> {
   const accessJwt = request.headers.get('Cf-Access-Jwt-Assertion');
@@ -224,15 +227,20 @@ app.post('/api/memories', async (c) => {
   const rows = data.id
     ? await query(c.env, 'INSERT INTO memories (id, world_id, room_id, instruction, context, response, metadata, embedding) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::vector) ON CONFLICT (id) DO UPDATE SET updated_at = now() RETURNING *', [data.id, worldId, roomId, data.instruction, data.context, data.response, jsonObject(data.metadata), vector])
     : await query(c.env, 'INSERT INTO memories (world_id, room_id, instruction, context, response, metadata, embedding) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::vector) RETURNING *', [worldId, roomId, data.instruction, data.context, data.response, jsonObject(data.metadata), vector]);
-  return c.json(rows[0], 201);
+  const kvArchived = await archiveRecord(c.env.ARCHIVE_STORE, knowledgeArchiveKey(rows[0].id), {
+    recordType: 'knowledge', version: 1, archivedAt: new Date().toISOString(), ...rows[0]
+  });
+  return c.json({ ...rows[0], kvArchived }, 201);
 });
 app.get('/api/memories/:id', async (c) => {
   const rows = await query(c.env, 'SELECT * FROM memories WHERE id = $1', [parseId(c.req.param('id'))]);
   return rows[0] ? c.json(rows[0]) : c.json({ error: 'not_found' }, 404);
 });
 app.delete('/api/memories/:id', async (c) => {
-  const rows = await query(c.env, 'DELETE FROM memories WHERE id = $1 RETURNING id', [parseId(c.req.param('id'))]);
-  return rows[0] ? c.json({ deleted: rows[0].id }) : c.json({ error: 'not_found' }, 404);
+  const id = parseId(c.req.param('id'));
+  const rows = await query(c.env, 'DELETE FROM memories WHERE id = $1 RETURNING id', [id]);
+  const kvDeleted = await deleteArchiveKey(c.env.ARCHIVE_STORE, knowledgeArchiveKey(id));
+  return rows[0] ? c.json({ deleted: rows[0].id, kvDeleted }) : c.json({ error: 'not_found' }, 404);
 });
 
 app.get('/api/conversations', async (c) => c.json(await query(c.env, 'SELECT * FROM conversations ORDER BY created_at DESC LIMIT $1', [limitFrom(c)])));
@@ -253,8 +261,10 @@ app.get('/api/conversations/:id', async (c) => {
   return rows[0] ? c.json(rows[0]) : c.json({ error: 'not_found' }, 404);
 });
 app.delete('/api/conversations/:id', async (c) => {
-  const rows = await query(c.env, 'DELETE FROM conversations WHERE id = $1 RETURNING id', [parseId(c.req.param('id'))]);
-  return rows[0] ? c.json({ deleted: rows[0].id }) : c.json({ error: 'not_found' }, 404);
+  const id = parseId(c.req.param('id'));
+  const rows = await query(c.env, 'DELETE FROM conversations WHERE id = $1 RETURNING id', [id]);
+  const kvDeleted = await deleteArchivePrefix(c.env.ARCHIVE_STORE, `chat/v1/${id}/`);
+  return rows[0] ? c.json({ deleted: rows[0].id, kvDeleted }) : c.json({ error: 'not_found' }, 404);
 });
 
 app.get('/api/messages', async (c) => c.json(await query(c.env, 'SELECT * FROM messages ORDER BY created_at DESC LIMIT $1', [limitFrom(c)])));
@@ -265,15 +275,21 @@ app.post('/api/messages', async (c) => {
     ? await query(c.env, 'INSERT INTO messages (id, conversation_id, role, content, metadata) VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, metadata = EXCLUDED.metadata RETURNING *', [data.id, data.conversationId, data.role, data.content, jsonObject(data.metadata)])
     : await query(c.env, 'INSERT INTO messages (conversation_id, role, content, metadata) VALUES ($1,$2,$3,$4::jsonb) RETURNING *', [data.conversationId, data.role, data.content, jsonObject(data.metadata)]);
   await query(c.env, 'UPDATE conversations SET updated_at = now() WHERE id = $1', [data.conversationId]);
-  return c.json(rows[0], 201);
+  const message = rows[0];
+  const kvArchived = await archiveRecord(c.env.ARCHIVE_STORE, chatArchiveKey(message.conversation_id, message.id), {
+    recordType: 'chat-message', version: 1, archivedAt: new Date().toISOString(), ...message
+  });
+  return c.json({ ...message, kvArchived }, 201);
 });
 app.get('/api/messages/:id', async (c) => {
   const rows = await query(c.env, 'SELECT * FROM messages WHERE id = $1', [parseId(c.req.param('id'))]);
   return rows[0] ? c.json(rows[0]) : c.json({ error: 'not_found' }, 404);
 });
 app.delete('/api/messages/:id', async (c) => {
-  const rows = await query(c.env, 'DELETE FROM messages WHERE id = $1 RETURNING id', [parseId(c.req.param('id'))]);
-  return rows[0] ? c.json({ deleted: rows[0].id }) : c.json({ error: 'not_found' }, 404);
+  const rows = await query(c.env, 'DELETE FROM messages WHERE id = $1 RETURNING id, conversation_id', [parseId(c.req.param('id'))]);
+  if (!rows[0]) return c.json({ error: 'not_found' }, 404);
+  const kvDeleted = await deleteArchiveKey(c.env.ARCHIVE_STORE, chatArchiveKey(rows[0].conversation_id, rows[0].id));
+  return c.json({ deleted: rows[0].id, kvDeleted });
 });
 
 app.post('/api/chat', async (c) => {
