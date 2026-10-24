@@ -42,7 +42,6 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Deploy zazo-brain-backend to Cloudflare
-        # CHAT_PROVIDER and CLOUDFLARE_LORA_ID are configured as repository-level Actions variables.
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

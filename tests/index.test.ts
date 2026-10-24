@@ -54,12 +54,16 @@ describe('public Worker API boundary', () => {
     expect(response.status).toBe(400);
   });
 
-  it('reports a missing database binding instead of returning a fake answer', async () => {
+  it('does not fall back to third-party chat providers when Workers AI is unavailable', async () => {
     const response = await app.request('http://localhost/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ conversationId: '123e4567-e89b-42d3-a456-426614174000', messages: [{ role: 'user', content: 'مرحباً' }] })
     }, {});
     expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: 'service_not_configured',
+      message: 'Workers AI binding is not configured'
+    });
   });
 });
