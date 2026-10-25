@@ -62,7 +62,7 @@ export type WorkersAiFailureCategory =
 export function classifyWorkersAiFailure(error: unknown): WorkersAiFailureCategory {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   if (/\b3006\b|request too large|context.{0,20}(limit|length)|too many tokens|sequence length/.test(message)) return 'context_limit';
-  if (/\b429\b|quota|rate.?limit|neuron.{0,20}(limit|quota)/.test(message)) return 'quota_limit';
+  if (/\b4006\b|\b429\b|quota|rate.?limit|neuron.{0,20}(limit|quota)/.test(message)) return 'quota_limit';
   if (/\b5005\b|lora|adapter|fine.?tun/.test(message)) return 'lora_configuration';
   if (/\b3042\b|invalid model|model.{0,20}(not found|invalid)/.test(message)) return 'model_configuration';
   if (/\b503\b|timeout|temporarily unavailable|service unavailable/.test(message)) return 'provider_unavailable';

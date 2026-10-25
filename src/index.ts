@@ -544,6 +544,8 @@ app.post('/api/chat', async (c) => {
       reply = await runInference(activeLoraId);
     } catch (error) {
       if (!activeLoraId) throw error;
+      const primaryFailureCategory = classifyWorkersAiFailure(error);
+      if (primaryFailureCategory === 'quota_limit' || primaryFailureCategory === 'context_limit') throw error;
       console.error('Workers AI LoRA inference failed; retrying without adapter', {
         model: modelName,
         lora: activeLoraId,
