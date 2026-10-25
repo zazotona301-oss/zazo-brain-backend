@@ -531,12 +531,29 @@ app.post('/api/chat', async (c) => {
   const inputChars = chatMessages.reduce((total, message) => total + message.content.length, 0);
   const modelName = c.env.CLOUDFLARE_CHAT_MODEL || '@cf/google/gemma-2b-it-lora';
   let reply = '';
+  let usedLora = Boolean(activeLoraId);
   try {
-    const payload = await c.env.AI.run(
-      modelName,
-      { messages: chatMessages, ...(activeLoraId ? { lora: activeLoraId } : {}), temperature: 0.4, max_tokens: 512 }
-    ) as { response?: unknown };
-    reply = typeof payload.response === 'string' ? payload.response.trim() : '';
+    const runInference = async (lora?: string): Promise<string> => {
+      const payload = await c.env.AI!.run(
+        modelName,
+        { messages: chatMessages, ...(lora ? { lora } : {}), temperature: 0.4, max_tokens: 512 }
+      ) as { response?: unknown };
+      return typeof payload.response === 'string' ? payload.response.trim() : '';
+    };
+    try {
+      reply = await runInference(activeLoraId);
+    } catch (error) {
+      if (!activeLoraId) throw error;
+      console.error('Workers AI LoRA inference failed; retrying without adapter', {
+        model: modelName,
+        lora: activeLoraId,
+        inputChars,
+        messageCount: chatMessages.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      reply = await runInference();
+      usedLora = false;
+    }
   } catch (error) {
     const failureCategory = classifyWorkersAiFailure(error);
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -561,7 +578,7 @@ app.post('/api/chat', async (c) => {
     return c.json({ error: 'assistant_failed', message: messages[failureCategory] }, 502);
   }
   if (!reply) return c.json({ error: 'assistant_failed', message: 'أعاد النموذج إجابة فارغة. حاول مرة أخرى.' }, 502);
-  return c.json({ content: reply, metadata: { provider: 'cloudflare-workers-ai', activeLoraId: activeLoraId ?? null, retrievedMemories: memories.length, retrievedConversationExamples: learnedConversations.length, usedActiveContext: activeContext != null } });
+  return c.json({ content: reply, metadata: { provider: 'cloudflare-workers-ai', activeLoraId: usedLora ? activeLoraId ?? null : null, loraFallback: Boolean(activeLoraId) && !usedLora, retrievedMemories: memories.length, retrievedConversationExamples: learnedConversations.length, usedActiveContext: activeContext != null } });
 });
 
 app.get('/api/search', async (c) => {
