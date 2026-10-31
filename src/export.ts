@@ -211,7 +211,7 @@ class JsonlChunkWriter {
   private async flush(): Promise<void> {
     if (!this.lines.length) return;
     const key = `${this.prefix}/chunk-${String(this.chunkIndex).padStart(5, '0')}.jsonl`;
-    await this.store.put(key, `${this.lines.join('\n')}\n`, { expirationTtl: ARCHIVE_TTL_SECONDS });
+    await this.store.put(key, `${this.lines.join('\n')}\n`);
     this.chunkKeys.push(key);
     this.chunkIndex += 1;
     this.lines = [];
@@ -352,9 +352,9 @@ export async function exportDataset(env: Env, _reason: string): Promise<ExportRe
     createdAt,
     expirationTtl: ARCHIVE_TTL_SECONDS,
   };
-  await env.ARCHIVE_STORE.put(manifestKey, JSON.stringify(manifest), { expirationTtl: ARCHIVE_TTL_SECONDS });
+  await env.ARCHIVE_STORE.put(manifestKey, JSON.stringify(manifest));
   const latestManifestKey = 'exports/zazo-rag-prepared/latest.json';
-  await env.ARCHIVE_STORE.put(latestManifestKey, JSON.stringify({ manifestKey, createdAt, rowCount, readyRows: readyWriter.rows, reviewRows: reviewWriter.rows }), { expirationTtl: ARCHIVE_TTL_SECONDS });
+  await env.ARCHIVE_STORE.put(latestManifestKey, JSON.stringify({ manifestKey, createdAt, rowCount, readyRows: readyWriter.rows, reviewRows: reviewWriter.rows }));
   return {
     manifestKey,
     latestManifestKey,

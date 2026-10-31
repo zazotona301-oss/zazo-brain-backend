@@ -1,5 +1,4 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
-import { ARCHIVE_TTL_SECONDS } from './export';
 
 export type ArchiveKV = Pick<KVNamespace, 'put' | 'delete' | 'list'>;
 
@@ -10,7 +9,7 @@ export async function archiveRecord(
 ): Promise<boolean> {
   if (!store) return false;
   try {
-    await store.put(key, JSON.stringify(record), { expirationTtl: ARCHIVE_TTL_SECONDS });
+    await store.put(key, JSON.stringify(record));
     return true;
   } catch (error) {
     console.error('KV record archive failed', { key, error: error instanceof Error ? error.message : 'unknown error' });

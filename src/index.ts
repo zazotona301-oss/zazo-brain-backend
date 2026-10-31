@@ -9,6 +9,7 @@ import type { Env } from './env';
 import { ConfigurationError, query } from './db';
 import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
 import { archiveRecord, deleteArchiveKey, deleteArchivePrefix } from './kv-archive';
+import { findIndexedDocuments, indexSearchDocument, removeSearchDocument, searchScore } from './kv-search';
 import { isAuthorizedRagDatasetWorkflow } from './github-oidc';
 import { activeContextSchema, chatRequestSchema, conversationSchema, idSchema, jsonBody, memorySchema, messageSchema, roomSchema, worldSchema } from './validation';
 import {
@@ -34,6 +35,16 @@ const limitFrom = (c: Context<AppEnv>): number => Math.min(Math.max(Number(c.req
 const parseId = (value: string): string => idSchema.parse(value);
 const knowledgeArchiveKey = (id: string): string => `knowledge/v1/${id}.json`;
 const chatArchiveKey = (conversationId: string, messageId: string): string => `chat/v1/${conversationId}/${messageId}.json`;
+async function rebuildSearchIndex(env: Env): Promise<number> {
+  if (!env.ARCHIVE_STORE) return 0;
+  const memories = await query<{ id: string; instruction: string; context: string; response: string }>(env, 'SELECT id, instruction, context, response FROM memories ORDER BY created_at ASC LIMIT 10000');
+  const messages = await query<{ id: string; content: string }>(env, 'SELECT id, content FROM messages ORDER BY created_at ASC LIMIT 10000');
+  await Promise.all([
+    ...memories.map((memory) => indexSearchDocument(env.ARCHIVE_STORE, 'memory', memory.id, `${memory.instruction}\n${memory.context}\n${memory.response}`)),
+    ...messages.map((message) => indexSearchDocument(env.ARCHIVE_STORE, 'message', message.id, message.content)),
+  ]);
+  return memories.length + messages.length;
+}
 
 async function isAuthorizedAdminUploader(request: Request, env: Env): Promise<boolean> {
   const accessJwt = request.headers.get('Cf-Access-Jwt-Assertion');
@@ -247,7 +258,6 @@ app.post('/api/admin/training-upload', async (c) => {
   const sourceFileKey = `training/uploads/${uploadName}/source.${extension}`;
   try {
     await c.env.ARCHIVE_STORE.put(sourceFileKey, fileBytes, {
-      expirationTtl: ARCHIVE_TTL_SECONDS,
       metadata: { uploadId, uploadName, originalFileName: file.name.slice(0, 200), sha256: fileSha256 },
     });
   } catch {
@@ -287,6 +297,10 @@ app.post('/api/admin/training-upload', async (c) => {
       ON CONFLICT (id) DO NOTHING
       RETURNING id
     `, [worldId, roomId, JSON.stringify(uploadRecords)]);
+    const insertedIds = new Set(inserted.map(({ id }) => id));
+    await Promise.all(uploadRecords
+      .filter((record) => insertedIds.has(record.id))
+      .map((record) => indexSearchDocument(c.env.ARCHIVE_STORE, 'memory', record.id, `${record.instruction}\n${record.context}\n${record.response}`)));
   } catch (error) {
     let sourceCleanupFailed = false;
     try {
@@ -446,6 +460,7 @@ app.post('/api/memories', async (c) => {
   const kvArchived = await archiveRecord(c.env.ARCHIVE_STORE, knowledgeArchiveKey(rows[0].id), {
     recordType: 'knowledge', version: 1, archivedAt: new Date().toISOString(), ...rows[0]
   });
+  await indexSearchDocument(c.env.ARCHIVE_STORE, 'memory', rows[0].id, `${rows[0].instruction}\n${rows[0].context}\n${rows[0].response}`);
   return c.json({ ...rows[0], kvArchived }, 201);
 });
 app.get('/api/memories/:id', async (c) => {
@@ -454,8 +469,9 @@ app.get('/api/memories/:id', async (c) => {
 });
 app.delete('/api/memories/:id', async (c) => {
   const id = parseId(c.req.param('id'));
-  const rows = await query(c.env, 'DELETE FROM memories WHERE id = $1 RETURNING id', [id]);
+  const rows = await query<{ id: string; instruction: string; context: string; response: string }>(c.env, 'DELETE FROM memories WHERE id = $1 RETURNING id, instruction, context, response', [id]);
   const kvDeleted = await deleteArchiveKey(c.env.ARCHIVE_STORE, knowledgeArchiveKey(id));
+  if (rows[0]) await removeSearchDocument(c.env.ARCHIVE_STORE, 'memory', id, `${rows[0].instruction}\n${rows[0].context}\n${rows[0].response}`);
   return rows[0] ? c.json({ deleted: rows[0].id, kvDeleted }) : c.json({ error: 'not_found' }, 404);
 });
 
@@ -495,6 +511,7 @@ app.post('/api/messages', async (c) => {
   const kvArchived = await archiveRecord(c.env.ARCHIVE_STORE, chatArchiveKey(message.conversation_id, message.id), {
     recordType: 'chat-message', version: 1, archivedAt: new Date().toISOString(), ...message
   });
+  await indexSearchDocument(c.env.ARCHIVE_STORE, 'message', message.id, message.content);
   return c.json({ ...message, kvArchived }, 201);
 });
 app.get('/api/messages/:id', async (c) => {
@@ -502,9 +519,10 @@ app.get('/api/messages/:id', async (c) => {
   return rows[0] ? c.json(rows[0]) : c.json({ error: 'not_found' }, 404);
 });
 app.delete('/api/messages/:id', async (c) => {
-  const rows = await query(c.env, 'DELETE FROM messages WHERE id = $1 RETURNING id, conversation_id', [parseId(c.req.param('id'))]);
+  const rows = await query<{ id: string; conversation_id: string; content: string }>(c.env, 'DELETE FROM messages WHERE id = $1 RETURNING id, conversation_id, content', [parseId(c.req.param('id'))]);
   if (!rows[0]) return c.json({ error: 'not_found' }, 404);
   const kvDeleted = await deleteArchiveKey(c.env.ARCHIVE_STORE, chatArchiveKey(rows[0].conversation_id, rows[0].id));
+  await removeSearchDocument(c.env.ARCHIVE_STORE, 'message', rows[0].id, rows[0].content);
   return c.json({ deleted: rows[0].id, kvDeleted });
 });
 
@@ -517,8 +535,16 @@ app.post('/api/chat', async (c) => {
   if (!c.env.HYPERDRIVE?.connectionString) throw new ConfigurationError('HYPERDRIVE binding is not configured');
 
   const memoryText = "instruction || ' ' || context || ' ' || response";
-  const memories = await query(c.env, `SELECT instruction, context, response FROM memories WHERE to_tsvector('simple', ${memoryText}) @@ plainto_tsquery('simple', $1) ORDER BY ts_rank(to_tsvector('simple', ${memoryText}), plainto_tsquery('simple', $1)) DESC, created_at DESC LIMIT 6`, [latestUserMessage.content]);
-  const learnedConversations = await query(c.env, `SELECT user_message.content AS question, assistant_message.content AS answer FROM messages AS user_message JOIN LATERAL (SELECT content FROM messages WHERE conversation_id = user_message.conversation_id AND role = 'assistant' AND created_at > user_message.created_at ORDER BY created_at ASC LIMIT 1) AS assistant_message ON TRUE WHERE user_message.role = 'user' AND to_tsvector('simple', user_message.content) @@ plainto_tsquery('simple', $1) ORDER BY ts_rank(to_tsvector('simple', user_message.content), plainto_tsquery('simple', $1)) DESC, user_message.created_at DESC LIMIT 4`, [latestUserMessage.content]);
+  const indexedDocuments = await findIndexedDocuments(c.env.ARCHIVE_STORE, latestUserMessage.content);
+  const indexedMemoryIds = [...indexedDocuments.keys()].filter((id) => id.startsWith('memory:')).map((id) => id.slice('memory:'.length));
+  const indexedMessageIds = [...indexedDocuments.keys()].filter((id) => id.startsWith('message:')).map((id) => id.slice('message:'.length));
+  const memories = indexedMemoryIds.length
+    ? await query<{ instruction: string; context: string; response: string }>(c.env, 'SELECT instruction, context, response FROM memories WHERE id = ANY($1::uuid[])', [indexedMemoryIds])
+    : await query(c.env, `SELECT instruction, context, response FROM memories WHERE to_tsvector('simple', ${memoryText}) @@ plainto_tsquery('simple', $1) ORDER BY ts_rank(to_tsvector('simple', ${memoryText}), plainto_tsquery('simple', $1)) DESC, created_at DESC LIMIT 6`, [latestUserMessage.content]);
+  const learnedConversations = indexedMessageIds.length
+    ? await query(c.env, `SELECT user_message.content AS question, assistant_message.content AS answer FROM messages AS user_message JOIN LATERAL (SELECT content FROM messages WHERE conversation_id = user_message.conversation_id AND role = 'assistant' AND created_at > user_message.created_at ORDER BY created_at ASC LIMIT 1) AS assistant_message ON TRUE WHERE user_message.role = 'user' AND user_message.id = ANY($1::uuid[]) ORDER BY user_message.created_at DESC LIMIT 4`, [indexedMessageIds])
+    : await query(c.env, `SELECT user_message.content AS question, assistant_message.content AS answer FROM messages AS user_message JOIN LATERAL (SELECT content FROM messages WHERE conversation_id = user_message.conversation_id AND role = 'assistant' AND created_at > user_message.created_at ORDER BY created_at ASC LIMIT 1) AS assistant_message ON TRUE WHERE user_message.role = 'user' AND to_tsvector('simple', user_message.content) @@ plainto_tsquery('simple', $1) ORDER BY ts_rank(to_tsvector('simple', user_message.content), plainto_tsquery('simple', $1)) DESC, user_message.created_at DESC LIMIT 4`, [latestUserMessage.content]);
+  memories.sort((a, b) => searchScore(`${b.instruction}\n${b.context}\n${b.response}`, latestUserMessage.content) - searchScore(`${a.instruction}\n${a.context}\n${a.response}`, latestUserMessage.content));
   const activeContext = c.env.ACTIVE_CONTEXT ? await c.env.ACTIVE_CONTEXT.get('active-context', 'json').catch(() => null) : null;
   const knowledge = truncatePromptSection(memories.map((memory, index) => `(${index + 1}) السؤال/المفهوم: ${memory.instruction}\nالسياق: ${memory.context || ''}\nالإجابة/المعلومة: ${memory.response || ''}`).join('\n\n') || '(لا توجد ذكريات مطابقة)', MAX_KNOWLEDGE_CONTEXT_CHARS);
   const examples = truncatePromptSection(learnedConversations.map((item, index) => `مثال محفوظ ${index + 1}\nسؤال: ${item.question}\nإجابة Zazo السابقة: ${item.answer}`).join('\n\n') || '(لا توجد أمثلة مطابقة)', MAX_LEARNED_EXAMPLES_CHARS);
@@ -609,8 +635,9 @@ app.post('/api/dataset/export', async (c) => {
   if (!await isAuthorizedRagDatasetWorkflow(c.req.raw)) {
     return c.json({ error: 'unauthorized', message: 'يتطلب تصدير بيانات RAG هوية GitHub Actions المصرح بها' }, 401);
   }
+  const indexedRows = await rebuildSearchIndex(c.env);
   const result = await exportDataset(c.env, 'github-actions');
-  return c.json(result, 202);
+  return c.json({ ...result, indexedRows }, 202);
 });
 
 app.onError((error, c) => {

@@ -1,15 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ARCHIVE_TTL_SECONDS } from '../src/export';
 import { archiveRecord, deleteArchiveKey, deleteArchivePrefix, type ArchiveKV } from '../src/kv-archive';
 
 describe('KV archives', () => {
-  it('stores a JSON record with the shared archive TTL', async () => {
+  it('stores a JSON record permanently without a TTL', async () => {
     const put = vi.fn().mockResolvedValue(undefined);
     const store = { put, delete: vi.fn(), list: vi.fn() } as unknown as ArchiveKV;
     const record = { recordType: 'chat-message', content: 'test' };
 
     await expect(archiveRecord(store, 'chat/v1/conversation/message.json', record)).resolves.toBe(true);
-    expect(put).toHaveBeenCalledWith('chat/v1/conversation/message.json', JSON.stringify(record), { expirationTtl: ARCHIVE_TTL_SECONDS });
+    expect(put).toHaveBeenCalledWith('chat/v1/conversation/message.json', JSON.stringify(record));
   });
 
   it('reports a missing KV binding without failing Neon persistence callers', async () => {
