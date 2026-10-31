@@ -28,6 +28,7 @@ export const memorySchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
   embedding: z.array(z.number().finite()).length(1536).optional()
 });
+export const bulkMemorySchema = z.array(memorySchema).min(1).max(50);
 export const conversationSchema = z.object({
   id: idSchema.optional(),
   worldId: idSchema.optional(),

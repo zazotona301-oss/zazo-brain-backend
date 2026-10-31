@@ -11,7 +11,7 @@ import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
 import { archiveRecord, deleteArchiveKey, deleteArchivePrefix } from './kv-archive';
 import { findIndexedDocuments, indexSearchDocument, removeSearchDocument, searchScore } from './kv-search';
 import { isAuthorizedRagDatasetWorkflow } from './github-oidc';
-import { activeContextSchema, chatRequestSchema, conversationSchema, idSchema, jsonBody, memorySchema, messageSchema, roomSchema, worldSchema } from './validation';
+import { activeContextSchema, bulkMemorySchema, chatRequestSchema, conversationSchema, idSchema, jsonBody, memorySchema, messageSchema, roomSchema, worldSchema } from './validation';
 import {
   createTrainingUploadName,
   fileExtension,
@@ -462,6 +462,50 @@ app.post('/api/memories', async (c) => {
   });
   await indexSearchDocument(c.env.ARCHIVE_STORE, 'memory', rows[0].id, `${rows[0].instruction}\n${rows[0].context}\n${rows[0].response}`);
   return c.json({ ...rows[0], kvArchived }, 201);
+});
+app.post('/api/memories/bulk', async (c) => {
+  const data = await jsonBody(c.req.raw, bulkMemorySchema);
+  const defaults = await query<{ id: string }>(c.env, "SELECT id FROM rooms WHERE slug = 'general' ORDER BY created_at ASC LIMIT 1");
+  const defaultRoomId = defaults[0]?.id ?? null;
+  if (!defaultRoomId && data.some((item) => !item.worldId && !item.roomId)) {
+    return c.json({ error: 'configuration_error', message: 'No default room is configured' }, 503);
+  }
+  const rows = await query(c.env, `
+    INSERT INTO memories (id, world_id, room_id, instruction, context, response, metadata, embedding)
+    SELECT COALESCE(row_data.id, gen_random_uuid()), row_data.world_id,
+           COALESCE(row_data.room_id, CASE WHEN row_data.world_id IS NULL THEN $2::uuid ELSE NULL END),
+           row_data.instruction, row_data.context, row_data.response, row_data.metadata, row_data.embedding
+    FROM jsonb_to_recordset($1::jsonb) AS row_data(
+      id uuid, world_id uuid, room_id uuid, instruction text, context text,
+      response text, metadata jsonb, embedding vector
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      world_id = EXCLUDED.world_id,
+      room_id = EXCLUDED.room_id,
+      instruction = EXCLUDED.instruction,
+      context = EXCLUDED.context,
+      response = EXCLUDED.response,
+      metadata = EXCLUDED.metadata,
+      embedding = EXCLUDED.embedding,
+      updated_at = now()
+    RETURNING *
+  `, [JSON.stringify(data.map((item) => ({
+    id: item.id,
+    world_id: item.worldId ?? null,
+    room_id: item.roomId ?? null,
+    instruction: item.instruction,
+    context: item.context,
+    response: item.response,
+    metadata: item.metadata ?? {},
+    embedding: item.embedding ? `[${item.embedding.join(',')}]` : null,
+  }))), defaultRoomId]);
+  await Promise.all(rows.map(async (row) => {
+    await archiveRecord(c.env.ARCHIVE_STORE, knowledgeArchiveKey(row.id), {
+      recordType: 'knowledge', version: 1, archivedAt: new Date().toISOString(), ...row
+    });
+    await indexSearchDocument(c.env.ARCHIVE_STORE, 'memory', row.id, `${row.instruction}\n${row.context}\n${row.response}`);
+  }));
+  return c.json(rows.map((row) => ({ ...row, kvArchived: Boolean(c.env.ARCHIVE_STORE) })), 201);
 });
 app.get('/api/memories/:id', async (c) => {
   const rows = await query(c.env, 'SELECT * FROM memories WHERE id = $1', [parseId(c.req.param('id'))]);
