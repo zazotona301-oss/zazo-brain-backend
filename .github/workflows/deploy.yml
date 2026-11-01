@@ -44,7 +44,7 @@ jobs:
       - run: npm ci
       - name: Sync Worker secrets to Cloudflare
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_D1 }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -79,7 +79,7 @@ jobs:
       - run: npm ci
       - name: Deploy zazo-brain-backend to Cloudflare
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_D1 }}
         run: npx wrangler deploy
 
   audio-smoke-test:
