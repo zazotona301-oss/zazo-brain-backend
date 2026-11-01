@@ -113,6 +113,10 @@ export async function uploadKnowledgeText(env: Env, file: File): Promise<{ path:
   const result = await uploadFiles({
     repo: { type: 'model', name: HF_REPO },
     accessToken: env.HF_TOKEN,
+    // Knowledge files are small text blobs. The basic Hub upload is more
+    // reliable in Cloudflare Workers than negotiating the optional Xet
+    // transfer, and the nested directory is created by this commit itself.
+    useXet: false,
     commitTitle: `Add public knowledge document: ${base}`,
     commitDescription: 'Uploaded from the Zazo knowledge library. This file is public.',
     files: [{ path, content: new Blob([text], { type: 'text/plain; charset=utf-8' }) }],

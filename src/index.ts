@@ -169,8 +169,12 @@ app.post('/api/admin/knowledge-upload', async (c) => {
     const result = await uploadKnowledgeText(c.env, file);
     return c.json({ success: true, ...result, repository: 'zazo301/brain', visibility: 'public' }, 201);
   } catch (error) {
-    console.error('Hugging Face knowledge upload failed', error instanceof Error ? error.message : String(error));
-    return c.json({ error: 'knowledge_upload_failed', message: 'تعذر حفظ الملف في مستودع المعرفة العام؛ لم تُرفع الأوزان أو تُستبدل' }, 502);
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error('Hugging Face knowledge upload failed', reason);
+    return c.json({
+      error: 'knowledge_upload_failed',
+      message: `تعذر حفظ الملف في مستودع المعرفة العام (zazo301/brain، المسار knowledge/uploads/): ${reason}`,
+    }, 502);
   }
 });
 
