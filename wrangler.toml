@@ -34,52 +34,52 @@ id = "2b7372be6b434607a2d90015620c78d2"
 [[d1_databases]]
 binding = "KNOWLEDGE_01"
 database_name = "zazo-knowledge-shard-01"
-database_id = "d9798edf-6a50-4242-b65b-c0403ea0b13d"
+database_id = "4fcb08b0-065e-47eb-a962-6759c03dd082"
 
 [[d1_databases]]
 binding = "KNOWLEDGE_02"
 database_name = "zazo-knowledge-shard-02"
-database_id = "e79042eb-ad81-4327-8e14-ac17bd1ebf76"
+database_id = "4aa54c25-91eb-4a8b-982e-08197e73e04e"
 
 [[d1_databases]]
 binding = "KNOWLEDGE_03"
 database_name = "zazo-knowledge-shard-03"
-database_id = "cfd6e40f-032c-40e5-ba9c-7551728f373c"
+database_id = "60423cac-a688-4bf6-bdfb-f2d5bd59e134"
 
 [[d1_databases]]
 binding = "KNOWLEDGE_04"
 database_name = "zazo-knowledge-shard-04"
-database_id = "f067320c-34c7-47f0-92d5-386565994beb"
+database_id = "00ab4a8b-c162-4808-a91e-54b060b1fb33"
 
 [[d1_databases]]
 binding = "KNOWLEDGE_05"
 database_name = "zazo-knowledge-shard-05"
-database_id = "c27272c9-ad4b-499e-ae14-1c40c8dd438b"
+database_id = "fa17621c-28b3-4415-8534-5a7462b76cdf"
 
 [[d1_databases]]
 binding = "KNOWLEDGE_06"
 database_name = "zazo-knowledge-shard-06"
-database_id = "e7ef6c4c-2e97-43e8-97ad-10bbf8e9e98a"
+database_id = "51ac8b8b-f75c-4dfe-a9ba-923735d2b8b8"
 
 [[d1_databases]]
 binding = "KNOWLEDGE_07"
 database_name = "zazo-knowledge-shard-07"
-database_id = "78b776b6-93c1-4b3a-ad67-aed24a80aef0"
+database_id = "4632a661-6183-49ff-a43c-1cb4639c303d"
 
 [[d1_databases]]
 binding = "KNOWLEDGE_08"
 database_name = "zazo-knowledge-shard-08"
-database_id = "b8230ec1-81a3-4657-b063-ec7c5be4e210"
+database_id = "85744bdd-0d9c-4cc1-9a2e-08c840309635"
 
 [[d1_databases]]
 binding = "KNOWLEDGE_09"
 database_name = "zazo-knowledge-shard-09"
-database_id = "b1551599-569f-4020-806c-7ec6f0d939a9"
+database_id = "f6cfb383-59cf-425d-9316-4c493a950af1"
 
 [[d1_databases]]
 binding = "KNOWLEDGE_10"
 database_name = "zazo-knowledge-shard-10"
-database_id = "fc4bf18c-da3f-4805-8268-a6d32c2ded09"
+database_id = "343de4c7-79d0-4255-a722-e856f4264a16"
 
 [triggers]
 crons = ["17 3 * * *"]
