@@ -4,7 +4,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { z } from 'zod';
 import { createStreamedMultipartFile, isAllowedLoraWeightsSize } from './lora-upload-stream';
 import { resolveActiveLoraId } from './lora-config';
-import { classifyWorkersAiFailure, fitChatMessages, MAX_ACTIVE_CONTEXT_CHARS, MAX_CHAT_HISTORY_CHARS, MAX_CHAT_INPUT_CHARS, MAX_KNOWLEDGE_CONTEXT_CHARS, MAX_LEARNED_EXAMPLES_CHARS, truncatePromptSection } from './chat-context';
+import { buildKnowledgeFallback, classifyWorkersAiFailure, fitChatMessages, MAX_ACTIVE_CONTEXT_CHARS, MAX_CHAT_HISTORY_CHARS, MAX_CHAT_INPUT_CHARS, MAX_KNOWLEDGE_CONTEXT_CHARS, MAX_LEARNED_EXAMPLES_CHARS, needsArabicKnowledgeFallback, truncatePromptSection } from './chat-context';
 import type { Env } from './env';
 import { ConfigurationError, query } from './db';
 import { ARCHIVE_TTL_SECONDS, exportDataset } from './export';
@@ -651,6 +651,7 @@ app.post('/api/chat', async (c) => {
   const inputChars = chatMessages.reduce((total, message) => total + message.content.length, 0);
   const modelName = c.env.CLOUDFLARE_CHAT_MODEL || '@cf/google/gemma-2b-it-lora';
   let reply = '';
+  let replyFallback = false;
   let usedLora = Boolean(activeLoraId);
   try {
     const runInference = async (lora?: string): Promise<string> => {
@@ -689,18 +690,31 @@ app.post('/api/chat', async (c) => {
       inputChars,
       messageCount: chatMessages.length,
     });
-    const messages = {
-      context_limit: 'سياق المحادثة طويل على النموذج. أرسل سؤالًا أقصر أو ابدأ محادثة جديدة.',
-      quota_limit: 'تم بلوغ حد استخدام Cloudflare AI مؤقتًا. حاول مرة أخرى لاحقًا.',
-      lora_configuration: 'تعذر تشغيل محوّل التدريب الحالي على Cloudflare AI.',
-      model_configuration: 'إعداد نموذج المحادثة غير صالح.',
-      provider_unavailable: 'خدمة Cloudflare AI غير متاحة الآن. حاول مرة أخرى لاحقًا.',
-      unknown: 'تعذر على Cloudflare AI إكمال الرد. حاول مرة أخرى.',
-    } satisfies Record<ReturnType<typeof classifyWorkersAiFailure>, string>;
-    return c.json({ error: 'assistant_failed', message: messages[failureCategory] }, 502);
+    const fallback = buildKnowledgeFallback(librarySources);
+    if (fallback) {
+      reply = fallback;
+      replyFallback = true;
+    } else {
+      const messages = {
+        context_limit: 'سياق المحادثة طويل على النموذج. أرسل سؤالًا أقصر أو ابدأ محادثة جديدة.',
+        quota_limit: 'تم بلوغ حد استخدام Cloudflare AI مؤقتًا. حاول مرة أخرى لاحقًا.',
+        lora_configuration: 'تعذر تشغيل محوّل التدريب الحالي على Cloudflare AI.',
+        model_configuration: 'إعداد نموذج المحادثة غير صالح.',
+        provider_unavailable: 'خدمة Cloudflare AI غير متاحة الآن. حاول مرة أخرى لاحقًا.',
+        unknown: 'تعذر على Cloudflare AI إكمال الرد. حاول مرة أخرى.',
+      } satisfies Record<ReturnType<typeof classifyWorkersAiFailure>, string>;
+      return c.json({ error: 'assistant_failed', message: messages[failureCategory] }, 502);
+    }
+  }
+  if (librarySources.length && (!reply || needsArabicKnowledgeFallback(latestUserMessage.content, reply))) {
+    const fallback = buildKnowledgeFallback(librarySources);
+    if (fallback) {
+      reply = fallback;
+      replyFallback = true;
+    }
   }
   if (!reply) return c.json({ error: 'assistant_failed', message: 'أعاد النموذج إجابة فارغة. حاول مرة أخرى.' }, 502);
-  return c.json({ content: reply, metadata: { provider: 'cloudflare-workers-ai', activeLoraId: usedLora ? activeLoraId ?? null : null, loraFallback: Boolean(activeLoraId) && !usedLora, retrievedMemories: memories.length, retrievedKnowledgeChunks: librarySources.length, knowledgeSources: librarySources.map((source, index) => ({ citation: `K${index + 1}`, title: source.title, path: source.path, chunk: source.chunk, pageReference: source.pageReference, url: source.url })), retrievedConversationExamples: learnedConversations.length, usedActiveContext: activeContext != null } });
+  return c.json({ content: reply, metadata: { provider: replyFallback ? 'huggingface-knowledge-fallback' : 'cloudflare-workers-ai', replyFallback, activeLoraId: !replyFallback && usedLora ? activeLoraId ?? null : null, loraFallback: !replyFallback && Boolean(activeLoraId) && !usedLora, retrievedMemories: memories.length, retrievedKnowledgeChunks: librarySources.length, knowledgeSources: librarySources.map((source, index) => ({ citation: `K${index + 1}`, title: source.title, path: source.path, chunk: source.chunk, pageReference: source.pageReference, url: source.url })), retrievedConversationExamples: learnedConversations.length, usedActiveContext: activeContext != null } });
 });
 
 app.get('/api/search', async (c) => {

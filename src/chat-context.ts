@@ -51,6 +51,30 @@ export function fitChatMessages(messages: ChatTurn[], maxChars = MAX_CHAT_HISTOR
   return selected;
 }
 
+export function needsArabicKnowledgeFallback(question: string, reply: string): boolean {
+  if (!/[\u0600-\u06FF]/u.test(question)) return false;
+  const letters = reply.match(/\p{L}/gu) || [];
+  if (!letters.length) return true;
+  const arabicLetters = reply.match(/\p{Script=Arabic}/gu) || [];
+  return arabicLetters.length / letters.length < 0.35;
+}
+
+export type KnowledgeFallbackSource = {
+  content: string;
+  pageReference?: string | null;
+};
+
+export function buildKnowledgeFallback(sources: KnowledgeFallbackSource[]): string {
+  const excerpts = sources.slice(0, 2).map((source, index) => {
+    const content = source.content.trim().slice(0, 500);
+    if (!content) return '';
+    const page = source.pageReference ? ` (الصفحة ${source.pageReference})` : '';
+    return `مقتطف ${index + 1}${page}:\n${content}\n[K${index + 1}]`;
+  }).filter(Boolean);
+  if (!excerpts.length) return '';
+  return `لم أتمكن من صياغة إجابة عربية موثوقة الآن، لذلك أعرض المقاطع المطابقة من مكتبة Hugging Face بدلًا من التخمين. افتح رابط المصدر أسفل الرد.\n\n${excerpts.join('\n\n')}`;
+}
+
 export type WorkersAiFailureCategory =
   | 'context_limit'
   | 'quota_limit'
