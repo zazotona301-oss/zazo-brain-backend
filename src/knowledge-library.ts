@@ -15,6 +15,7 @@ export interface KnowledgeSource {
   path: string;
   chunk: number;
   content: string;
+  pageReference: string | null;
   url: string;
   rank: number;
 }
@@ -67,21 +68,72 @@ function fileIsIndexable(path: string): boolean {
   return /\.(?:txt|md|markdown|json|jsonl|ndjson|csv|tsv)$/i.test(path);
 }
 
-function makeMatchQuery(question: string): string {
+const SEARCH_STOP_WORDS = new Set([
+  'من', 'ما', 'ماذا', 'هل', 'كيف', 'لماذا', 'اين', 'أين', 'متى', 'هو', 'هي', 'هم', 'هن',
+  'في', 'على', 'عن', 'الى', 'إلى', 'حتى', 'ثم', 'قد', 'كان', 'كانت', 'يكون', 'تكون',
+  'هذا', 'هذه', 'ذلك', 'تلك', 'هناك', 'الذي', 'التي', 'الذين', 'مع', 'بين', 'عند', 'او', 'أو',
+  'ان', 'أن', 'إن', 'لكن', 'لي', 'فيه', 'بها', 'له', 'لها', 'اجب', 'أجب', 'جاوب', 'باختصار',
+  'اعتمادا', 'اعتمادًا', 'مكتبة', 'المعرفة', 'مصدر', 'مصادر', 'ابحث', 'اشرح', 'اكتب', 'لخص',
+  'وضح', 'اخبرني', 'أخبرني', 'اريد', 'أريد', 'ممكن', 'رجاء'
+]);
+
+function foldArabic(term: string): string {
+  return term.normalize('NFKC').toLowerCase()
+    .replace(/[\u064B-\u065F\u0670\u0640]/gu, '')
+    .replace(/[أإآٱ]/gu, 'ا')
+    .replace(/ى/gu, 'ي');
+}
+
+export function buildKnowledgeMatchQuery(question: string): string {
   const terms = (question.normalize('NFKC').match(/[\p{L}\p{N}]+/gu) || [])
-    .filter((term) => term.length > 1)
-    .slice(-12);
-  return [...new Set(terms)].map((term) => `"${term.replaceAll('"', '""')}"`).join(' OR ');
+    .map((term) => term.toLowerCase())
+    .filter((term) => [...term].length >= 3 && !SEARCH_STOP_WORDS.has(term))
+    .slice(-8);
+  const variants = new Set<string>();
+  const add = (term: string) => {
+    if ([...term].length >= 3) variants.add(term);
+  };
+
+  for (const term of new Set(terms)) {
+    const candidates = new Set([term, foldArabic(term)]);
+    for (const candidate of [...candidates]) {
+      if (/^[وفبكل]/u.test(candidate) && [...candidate].length > 4) candidates.add(candidate.slice(1));
+    }
+    for (const candidate of candidates) {
+      add(candidate);
+      const folded = foldArabic(candidate);
+      add(folded);
+      for (const value of new Set([candidate, folded])) {
+        if (value.startsWith('ال') && [...value].length > 4) add(value.slice(2));
+        else if ([...value].length >= 4) add(`ال${value}`);
+      }
+    }
+  }
+
+  const quotedTerms = [...variants].map((term) => `"${term.replaceAll('"', '""')}"`);
+  return quotedTerms.length ? `content : (${quotedTerms.join(' OR ')})` : '';
+}
+
+export function extractPageReference(content: string): string | null {
+  const pages = [...content.matchAll(/=====\s*صفحة\s*المصدر\s*(\d+)\s*=====/gu)]
+    .map((match) => Number(match[1]))
+    .filter((page) => Number.isFinite(page));
+  if (!pages.length) return null;
+  const first = pages[0];
+  const last = pages[pages.length - 1];
+  return first === last ? String(first) : `${first}–${last}`;
 }
 
 export async function searchKnowledge(env: Env, question: string, limit = 8): Promise<KnowledgeSource[]> {
-  const match = makeMatchQuery(question);
+  const match = buildKnowledgeMatchQuery(question);
   const databases = knowledgeDatabases(env);
   if (!match || !databases.length) return [];
   const results = await Promise.all(databases.map(async (database) => {
     try {
       const { results: rows } = await database.prepare(
-        `SELECT title, source_path AS path, chunk_id, content, bm25(knowledge_fts) AS rank
+        `SELECT title, source_path AS path, chunk_id,
+                snippet(knowledge_fts, 1, '⟦', '⟧', ' … ', 36) AS content,
+                bm25(knowledge_fts) AS rank
          FROM knowledge_fts WHERE knowledge_fts MATCH ?
          ORDER BY rank LIMIT ?`
       ).bind(match, SEARCH_LIMIT_PER_SHARD).all<{
@@ -92,6 +144,7 @@ export async function searchKnowledge(env: Env, question: string, limit = 8): Pr
         path: row.path,
         chunk: Number(row.chunk_id.split(':').pop()) || 0,
         content: row.content,
+        pageReference: extractPageReference(row.content),
         url: sourceUrl(row.path),
         rank: Number(row.rank) || 0,
       }));
