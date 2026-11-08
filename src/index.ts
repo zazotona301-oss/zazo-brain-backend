@@ -638,9 +638,13 @@ app.post('/api/chat', async (c) => {
   try { librarySources = await searchKnowledge(c.env, latestUserMessage.content, 6); }
   catch (error) { console.error('Knowledge library retrieval failed', error instanceof Error ? error.message : String(error)); }
   const activeContext = c.env.ACTIVE_CONTEXT ? await c.env.ACTIVE_CONTEXT.get('active-context', 'json').catch(() => null) : null;
-  const neonKnowledge = truncatePromptSection(memories.map((memory, index) => `ذاكرة Neon ${index + 1}\nالمفهوم: ${memory.instruction}\nالسياق: ${memory.context || ''}\nالمعلومة: ${memory.response || ''}`).join('\n\n'), MAX_NEON_CONTEXT_CHARS);
+  const neonKnowledge = librarySources.length
+    ? ''
+    : truncatePromptSection(memories.map((memory, index) => `ذاكرة Neon ${index + 1}\nالمفهوم: ${memory.instruction}\nالسياق: ${memory.context || ''}\nالمعلومة: ${memory.response || ''}`).join('\n\n'), MAX_NEON_CONTEXT_CHARS);
   const libraryKnowledge = truncatePromptSection(librarySources.map((source, index) => `[K${index + 1}] ${source.title}\nالصفحة: ${source.pageReference || 'غير محددة'} · المقطع: ${source.chunk}\nنص المصدر:\n${source.content}`).join('\n\n') || '(لم يُعثر على مقاطع مطابقة من الكتاب)', MAX_KNOWLEDGE_CONTEXT_CHARS);
-  const examples = truncatePromptSection(learnedConversations.map((item, index) => `مثال محفوظ ${index + 1}\nسؤال: ${item.question}\nإجابة Zazo السابقة: ${item.answer}`).join('\n\n') || '(لا توجد أمثلة مطابقة)', MAX_LEARNED_EXAMPLES_CHARS);
+  const examples = librarySources.length
+    ? '(لا تُستخدم أمثلة سابقة عند توفر مقاطع من الكتاب)'
+    : truncatePromptSection(learnedConversations.map((item, index) => `مثال محفوظ ${index + 1}\nسؤال: ${item.question}\nإجابة Zazo السابقة: ${item.answer}`).join('\n\n') || '(لا توجد أمثلة مطابقة)', MAX_LEARNED_EXAMPLES_CHARS);
   const activeContextText = activeContext == null
     ? '(لا يوجد سياق نشط)'
     : truncatePromptSection(JSON.stringify(activeContext), MAX_ACTIVE_CONTEXT_CHARS);
@@ -655,7 +659,7 @@ app.post('/api/chat', async (c) => {
     const runInference = async (lora?: string): Promise<string> => {
       const payload = await c.env.AI!.run(
         modelName,
-        { messages: chatMessages, ...(lora ? { lora } : {}), temperature: 0.4, max_tokens: 512 }
+        { messages: chatMessages, ...(lora ? { lora } : {}), temperature: 0.2, max_tokens: 512 }
       ) as { response?: unknown };
       return typeof payload.response === 'string' ? payload.response.trim() : '';
     };
@@ -706,13 +710,13 @@ app.post('/api/chat', async (c) => {
     try {
       const payload = await c.env.AI.run(modelName, {
         messages: strictMessages,
+        ...(usedLora && activeLoraId ? { lora: activeLoraId } : {}),
         temperature: 0.2,
         max_tokens: 512,
       }) as { response?: unknown };
       const retryReply = typeof payload.response === 'string' ? payload.response.trim() : '';
       if (retryReply && !isReplyLikelyNonArabic(latestUserMessage.content, retryReply)) {
         reply = retryReply;
-        usedLora = false;
       } else {
         return c.json({ error: 'assistant_failed', message: 'لم يتمكن النموذج من صياغة إجابة عربية واضحة. أعد صياغة السؤال وحاول مرة أخرى.' }, 502);
       }
