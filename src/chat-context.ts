@@ -3,11 +3,12 @@ export type ChatTurn = {
   content: string;
 };
 
-export const MAX_CHAT_INPUT_CHARS = 6_000;
-export const MAX_CHAT_HISTORY_CHARS = 2_200;
-export const MAX_ACTIVE_CONTEXT_CHARS = 1_200;
-export const MAX_KNOWLEDGE_CONTEXT_CHARS = 1_400;
-export const MAX_LEARNED_EXAMPLES_CHARS = 800;
+export const MAX_CHAT_INPUT_CHARS = 10_000;
+export const MAX_CHAT_HISTORY_CHARS = 1_400;
+export const MAX_ACTIVE_CONTEXT_CHARS = 800;
+export const MAX_NEON_CONTEXT_CHARS = 1_000;
+export const MAX_KNOWLEDGE_CONTEXT_CHARS = 5_200;
+export const MAX_LEARNED_EXAMPLES_CHARS = 600;
 
 export function truncatePromptSection(value: string, maxChars: number): string {
   if (maxChars <= 0) return '';
@@ -51,28 +52,12 @@ export function fitChatMessages(messages: ChatTurn[], maxChars = MAX_CHAT_HISTOR
   return selected;
 }
 
-export function needsArabicKnowledgeFallback(question: string, reply: string): boolean {
+export function isReplyLikelyNonArabic(question: string, reply: string): boolean {
   if (!/[\u0600-\u06FF]/u.test(question)) return false;
   const letters = reply.match(/\p{L}/gu) || [];
   if (!letters.length) return true;
   const arabicLetters = reply.match(/\p{Script=Arabic}/gu) || [];
   return arabicLetters.length / letters.length < 0.35;
-}
-
-export type KnowledgeFallbackSource = {
-  content: string;
-  pageReference?: string | null;
-};
-
-export function buildKnowledgeFallback(sources: KnowledgeFallbackSource[]): string {
-  const excerpts = sources.slice(0, 2).map((source, index) => {
-    const content = source.content.trim().slice(0, 500);
-    if (!content) return '';
-    const page = source.pageReference ? ` (الصفحة ${source.pageReference})` : '';
-    return `مقتطف ${index + 1}${page}:\n${content}\n[K${index + 1}]`;
-  }).filter(Boolean);
-  if (!excerpts.length) return '';
-  return `لم أتمكن من صياغة إجابة عربية موثوقة الآن، لذلك أعرض المقاطع المطابقة من مكتبة Hugging Face بدلًا من التخمين. افتح رابط المصدر أسفل الرد.\n\n${excerpts.join('\n\n')}`;
 }
 
 export type WorkersAiFailureCategory =

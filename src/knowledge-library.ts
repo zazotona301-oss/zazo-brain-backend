@@ -8,7 +8,7 @@ const MAX_SYNC_FILE_BYTES = 12 * 1024 * 1024;
 const MAX_SYNC_BYTES_PER_RUN = 40 * 1024 * 1024;
 const MAX_FILES_PER_RUN = 100;
 const CHUNK_CHARS = 3000;
-const SEARCH_LIMIT_PER_SHARD = 6;
+const SEARCH_LIMIT_PER_SHARD = 10;
 
 export interface KnowledgeSource {
   title: string;
@@ -74,7 +74,9 @@ const SEARCH_STOP_WORDS = new Set([
   'هذا', 'هذه', 'ذلك', 'تلك', 'هناك', 'الذي', 'التي', 'الذين', 'مع', 'بين', 'عند', 'او', 'أو',
   'ان', 'أن', 'إن', 'لكن', 'لي', 'فيه', 'بها', 'له', 'لها', 'اجب', 'أجب', 'جاوب', 'باختصار',
   'اعتمادا', 'اعتمادًا', 'مكتبة', 'المعرفة', 'مصدر', 'مصادر', 'ابحث', 'اشرح', 'اكتب', 'لخص',
-  'وضح', 'اخبرني', 'أخبرني', 'اريد', 'أريد', 'ممكن', 'رجاء'
+  'وضح', 'اخبرني', 'أخبرني', 'اريد', 'أريد', 'ممكن', 'رجاء', 'كتاب', 'الكتاب',
+  'موضوع', 'الموضوع', 'خلاصة', 'الخلاصة', 'العامة', 'الرئيسية', 'الرئيسي', 'محتوى', 'محتويات',
+  'يتحدث', 'يتناول', 'يقول', 'ماهو', 'ماهي'
 ]);
 
 function foldArabic(term: string): string {
@@ -85,10 +87,13 @@ function foldArabic(term: string): string {
 }
 
 export function buildKnowledgeMatchQuery(question: string): string {
-  const terms = (question.normalize('NFKC').match(/[\p{L}\p{N}]+/gu) || [])
+  const allTerms = (question.normalize('NFKC').match(/[\p{L}\p{N}]+/gu) || [])
     .map((term) => term.toLowerCase())
-    .filter((term) => [...term].length >= 3 && !SEARCH_STOP_WORDS.has(term))
-    .slice(-8);
+    .filter((term) => [...term].length >= 3 && !SEARCH_STOP_WORDS.has(term));
+  const uniqueTerms = [...new Set(allTerms)];
+  const terms = uniqueTerms.length > 10
+    ? [...uniqueTerms.slice(0, 5), ...uniqueTerms.slice(-5)]
+    : uniqueTerms;
   const variants = new Set<string>();
   const add = (term: string) => {
     if ([...term].length >= 3) variants.add(term);
@@ -131,10 +136,12 @@ export async function searchKnowledge(env: Env, question: string, limit = 8): Pr
   const results = await Promise.all(databases.map(async (database) => {
     try {
       const { results: rows } = await database.prepare(
-        `SELECT title, source_path AS path, chunk_id,
-                snippet(knowledge_fts, 1, '⟦', '⟧', ' … ', 36) AS content,
+        `SELECT knowledge_chunks.title, knowledge_chunks.source_path AS path,
+                knowledge_chunks.id AS chunk_id, knowledge_chunks.content,
                 bm25(knowledge_fts) AS rank
-         FROM knowledge_fts WHERE knowledge_fts MATCH ?
+         FROM knowledge_fts
+         JOIN knowledge_chunks ON knowledge_chunks.id = knowledge_fts.chunk_id
+         WHERE knowledge_fts MATCH ?
          ORDER BY rank LIMIT ?`
       ).bind(match, SEARCH_LIMIT_PER_SHARD).all<{
         title: string; path: string; chunk_id: string; content: string; rank: number;

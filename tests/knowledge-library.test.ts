@@ -11,6 +11,7 @@ describe('D1 knowledge retrieval', () => {
     expect(match).toContain('"المؤلف"');
     expect(match).toContain('"الإسلام"');
     expect(match).toContain('"فلسفة"');
+    expect(match).not.toContain('"الكتاب"');
     expect(match).not.toContain('"من"');
     expect(match).not.toContain('"مكتبة"');
     expect(match).not.toContain('"المعرفة"');
@@ -25,16 +26,16 @@ describe('D1 knowledge retrieval', () => {
 
     expect(match).toContain('content : (');
     expect(match).not.toMatch(/\bOR\s+\*/);
-    expect(match).toContain('"موضوع"');
+    expect(match).toContain('"سياسي"');
   });
 
-  it('extracts source page references from indexed snippets', () => {
+  it('extracts source page references from indexed chunks', () => {
     expect(extractPageReference('===== صفحة المصدر 008 =====\nنص')).toBe('8');
     expect(extractPageReference('===== صفحة المصدر 052 =====\nنص\n===== صفحة المصدر 053 =====')).toBe('52–53');
     expect(extractPageReference('مقتطف بلا علامة صفحة')).toBeNull();
   });
 
-  it('searches D1 using a relevant FTS snippet and returns page-aware source metadata', async () => {
+  it('returns the full indexed chunk and page-aware metadata from D1', async () => {
     const rows = [{
       title: 'الإسلام_وفلسفة_الحكم_نص_مستخرج.txt',
       path: 'knowledge/uploads/الإسلام_وفلسفة_الحكم_نص_مستخرج.txt',
@@ -49,8 +50,8 @@ describe('D1 knowledge retrieval', () => {
 
     const sources = await searchKnowledge(env, 'ما موقف المعتزلة من الإمامة؟', 3);
 
-    expect(prepare).toHaveBeenCalledWith(expect.stringContaining('snippet(knowledge_fts, 1'));
-    expect(bind).toHaveBeenCalledWith(expect.stringContaining('content : ('), 6);
+    expect(prepare).toHaveBeenCalledWith(expect.stringContaining('JOIN knowledge_chunks ON knowledge_chunks.id = knowledge_fts.chunk_id'));
+    expect(bind).toHaveBeenCalledWith(expect.stringContaining('content : ('), 10);
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({
       title: 'الإسلام_وفلسفة_الحكم_نص_مستخرج.txt',

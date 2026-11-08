@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildKnowledgeFallback,
   classifyWorkersAiFailure,
   fitChatMessages,
+  isReplyLikelyNonArabic,
   MAX_CHAT_HISTORY_CHARS,
-  needsArabicKnowledgeFallback,
   truncatePromptSection,
 } from '../src/chat-context';
 
@@ -39,25 +38,18 @@ describe('chat context limits', () => {
   });
 });
 
-describe('Arabic knowledge fallback', () => {
+describe('Arabic response validation', () => {
   it('detects non-Arabic output for an Arabic question', () => {
-    expect(needsArabicKnowledgeFallback('ما هو الفكر السياسي الإسلامي؟', 'for y puede una una ser una')).toBe(true);
+    expect(isReplyLikelyNonArabic('ما هو الفكر السياسي الإسلامي؟', 'for y puede una una ser una')).toBe(true);
   });
 
   it('keeps a proper Arabic answer and does not change English conversations', () => {
-    expect(needsArabicKnowledgeFallback('ما هو الفكر السياسي الإسلامي؟', 'الفكر السياسي الإسلامي يتناول علاقة الحكم بالمجتمع.')).toBe(false);
-    expect(needsArabicKnowledgeFallback('What is Islamic political thought?', 'It studies political ideas and governance.')).toBe(false);
+    expect(isReplyLikelyNonArabic('ما هو الفكر السياسي الإسلامي؟', 'الفكر السياسي الإسلامي يتناول علاقة الحكم بالمجتمع.')).toBe(false);
+    expect(isReplyLikelyNonArabic('What is Islamic political thought?', 'It studies political ideas and governance.')).toBe(false);
   });
 
-  it('builds a short grounded fallback with a citation and page number', () => {
-    const fallback = buildKnowledgeFallback([
-      { content: 'الفكر السياسي الإسلامي ومبادئ الحكم.', pageReference: '8' },
-    ]);
-
-    expect(fallback).toContain('مكتبة Hugging Face');
-    expect(fallback).toContain('الصفحة 8');
-    expect(fallback).toContain('[K1]');
-    expect(fallback).toContain('الفكر السياسي الإسلامي');
+  it('treats an empty answer to an Arabic question as unusable', () => {
+    expect(isReplyLikelyNonArabic('ما معنى الإمامة؟', '')).toBe(true);
   });
 });
 
