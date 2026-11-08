@@ -620,7 +620,9 @@ app.post('/api/chat', async (c) => {
   const latestUserMessage = [...data.messages].reverse().find((message) => message.role === 'user');
   if (!latestUserMessage) return c.json({ error: 'validation_error', message: 'A user message is required' }, 400);
   if (!c.env.AI) throw new ConfigurationError('Workers AI binding is not configured');
-  const activeLoraId = await resolveActiveLoraId(c.env.ACTIVE_CONTEXT, c.env.CLOUDFLARE_LORA_ID);
+  const activeLoraId = c.env.CLOUDFLARE_CHAT_MODEL === '@cf/google/gemma-2b-it-lora'
+    ? await resolveActiveLoraId(c.env.ACTIVE_CONTEXT, c.env.CLOUDFLARE_LORA_ID)
+    : undefined;
   if (!c.env.HYPERDRIVE?.connectionString) throw new ConfigurationError('HYPERDRIVE binding is not configured');
 
   const memoryText = "instruction || ' ' || context || ' ' || response";
@@ -652,7 +654,7 @@ app.post('/api/chat', async (c) => {
   const historyBudget = Math.min(MAX_CHAT_HISTORY_CHARS, Math.max(0, MAX_CHAT_INPUT_CHARS - systemPrompt.length));
   const chatMessages = [{ role: 'system', content: systemPrompt }, ...fitChatMessages(data.messages, historyBudget)];
   const inputChars = chatMessages.reduce((total, message) => total + message.content.length, 0);
-  const modelName = c.env.CLOUDFLARE_CHAT_MODEL || '@cf/google/gemma-2b-it-lora';
+  const modelName = c.env.CLOUDFLARE_CHAT_MODEL || '@cf/qwen/qwen3-30b-a3b-fp8';
   let reply = '';
   let usedLora = Boolean(activeLoraId);
   try {
