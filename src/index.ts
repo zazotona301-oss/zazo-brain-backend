@@ -26,6 +26,7 @@ import {
   trainingRowId,
   trainingUploadIdSchema,
 } from './training-upload';
+import { chatTestPage } from './chat-test-page';
 
 type AppEnv = { Bindings: Env };
 const app = new Hono<AppEnv>();
@@ -71,6 +72,7 @@ async function isAuthorizedAdminUploader(request: Request, env: Env): Promise<bo
 app.get('/', (c) => c.json({ service: 'zazo-brain-backend', status: 'ok', storage: { neon: Boolean(c.env.HYPERDRIVE), kv: Boolean(c.env.ACTIVE_CONTEXT && c.env.ARCHIVE_STORE) } }));
 app.get('/health', (c) => c.json({ status: 'ok', service: 'zazo-brain-backend', time: new Date().toISOString() }));
 app.get('/api/health', (c) => c.json({ status: 'ok', storage: { neon: Boolean(c.env.HYPERDRIVE), kv: Boolean(c.env.ACTIVE_CONTEXT && c.env.ARCHIVE_STORE) } }));
+app.get('/chat-test', (c) => c.html(chatTestPage));
 
 app.post('/api/admin/lora-upload', async (c) => {
   const cloudflareToken = c.env.CLOUDFLARE_API_TOKEN;
